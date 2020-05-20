@@ -188,7 +188,8 @@ class GaussianProcess:
         _global_training_data[self.name] = self.training_data
         _global_training_labels[self.name] = self.training_labels_np
 
-        assert (len(self.cutoffs)<=3)
+        # TODO: change after the mb kernel becomes m2b*m3b
+        assert (len(self.cutoffs)<=4)
 
         if (len(self.cutoffs)>1):
             assert self.cutoffs[0]>=self.cutoffs[1], \

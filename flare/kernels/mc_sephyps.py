@@ -98,9 +98,9 @@ def two_three_many_body_mc(env1, env2, d1, d2, cutoffs,
                           d1, d2, sig3, ls3, r_cut_3, cutoff_func,
                           nspec, spec_mask, triplet_mask)
 
-    many_term = many_2body_mc_jit(env1.q_array, env2.q_array, 
-                            env1.q_neigh_array, env2.q_neigh_array, 
-                            env1.q_neigh_grads, env2.q_neigh_grads,
+    many_term = many_2body_mc_jit(env1.m2b_array, env2.m2b_array, 
+                            env1.m2b_neigh_array, env2.m2b_neigh_array, 
+                            env1.m2b_neigh_grads, env2.m2b_neigh_grads,
                             env1.ctype, env2.ctype, 
                             env1.etypes_mb, env2.etypes_mb, 
                             env1.unique_species, env2.unique_species, 
@@ -137,9 +137,9 @@ def two_three_many_body_mc_grad(env1, env2, d1, d2, cutoffs,
                                nspec, spec_mask,
                                ntriplet, triplet_mask)
 
-    kern_many, gradm = many_2body_mc_grad_jit(env1.q_array, env2.q_array, 
-                                 env1.q_neigh_array, env2.q_neigh_array, 
-                                 env1.q_neigh_grads, env2.q_neigh_grads,
+    kern_many, gradm = many_2body_mc_grad_jit(env1.m2b_array, env2.m2b_array, 
+                                 env1.m2b_neigh_array, env2.m2b_neigh_array, 
+                                 env1.m2b_neigh_grads, env2.m2b_neigh_grads,
                                  env1.ctype, env2.ctype, 
                                  env1.etypes_mb, env2.etypes_mb,
                                  env1.unique_species, env2.unique_species, 
@@ -176,10 +176,10 @@ def two_three_many_mc_force_en(env1, env2, d1, cutoffs,
                                    spec_mask,
                                    triplet_mask) / 3
 
-    many_term = many_2body_mc_force_en_jit(env1.q_array, env2.q_array, 
-                              env1.q_neigh_array, env1.q_neigh_grads,
-                              env1.ctype, env2.ctype, env1.etypes_mb,  
-                              env1.unique_species, env2.unique_species, 
+    many_term = many_2body_mc_force_en_jit(env1.m2b_array, env2.m2b_array, 
+                              env1.m2b_neigh_array, env1.m2b_neigh_grads,
+                              env1.ctype, env2.ctype, env1.etypes_m2b,  
+                              env1.m2b_unique_species, env2.m2b_unique_species, 
                               d1, sigm, lsm)
 
     return two_term + three_term + many_term
@@ -211,9 +211,9 @@ def two_three_many_mc_en(env1, env2, cutoffs,
                              nspec, spec_mask,
                              triplet_mask)
 
-    many_term = many_2body_mc_en_jit(env1.q_array, env2.q_array, 
+    many_term = many_2body_mc_en_jit(env1.m2b_array, env2.m2b_array, 
                                     env1.ctype, env2.ctype, 
-                                    env1.unique_species, env2.unique_species,
+                                    env1.m2b_unique_species, env2.m2b_unique_species,
                                     sigm, lsm)
 
     return two_term + three_term + many_term

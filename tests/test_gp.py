@@ -19,8 +19,8 @@ from flare.otf_parser import OtfAnalysis
 from .fake_gp import generate_hm, get_tstp, get_random_structure
 from copy import deepcopy
 
-multihyps_list = [True, False]
-
+#multihyps_list = [True, False]
+multihyps_list = [False]
 
 @pytest.fixture(scope='class')
 def all_gps() -> GaussianProcess:
@@ -38,7 +38,7 @@ def all_gps() -> GaussianProcess:
         gpname = '2+3+mb_mc'
         hyps = np.hstack([hyps, [1, 1]])
         hl = np.hstack([hl[:-1], ['sigm', 'lsm'], hl[-1]])
-        cutoffs = np.ones(3)*0.8
+        cutoffs = np.ones(4)*0.8
 
         gp_dict[multihyps] = \
             GaussianProcess(kernel_name=gpname,
