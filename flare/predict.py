@@ -29,7 +29,7 @@ def predict_on_atom(param: Tuple[Structure, int, GaussianProcess]) -> (
     # Unpack the input tuple, convert a chemical environment
     structure, atom, gp = param
     # Obtain the associated chemical environment
-    chemenv = AtomicEnvironment(structure, atom, gp.cutoffs)
+    chemenv = AtomicEnvironment(structure, atom, gp.cutoffs, cutoffs_mask=gp.hyps_mask)
     components = []
     stds = []
     # predict force components and standard deviations
@@ -58,7 +58,7 @@ def predict_on_atom_en(param: Tuple[Structure, int, GaussianProcess]) -> (
     # Unpack the input tuple, convert a chemical environment
     structure, atom, gp = param
     # Obtain the associated chemical environment
-    chemenv = AtomicEnvironment(structure, atom, gp.cutoffs)
+    chemenv = AtomicEnvironment(structure, atom, gp.cutoffs, cutoffs_mask=gp.hyps_mask)
     comps = []
     stds = []
     # predict force components and standard deviations
@@ -69,7 +69,21 @@ def predict_on_atom_en(param: Tuple[Structure, int, GaussianProcess]) -> (
 
     # predict local energy
     local_energy = gp.predict_local_energy(chemenv)
+
     return np.array(comps), np.array(stds), local_energy
+
+
+def predict_on_atom_en_std(param):
+    """Predict local energy and predictive std of a chemical environment."""
+
+    structure, atom, gp = param
+    chemenv = AtomicEnvironment(structure, atom, gp.cutoffs, cutoffs_mask=gp.hyps_mask)
+
+    # predict local energy
+    loc_en, loc_en_var = gp.predict_local_energy_and_var(chemenv)
+    loc_en_std = np.sqrt(np.abs(loc_en_var))
+
+    return loc_en, loc_en_std
 
 
 def predict_on_structure(structure: Structure, gp: GaussianProcess,
@@ -94,8 +108,12 @@ def predict_on_structure(structure: Structure, gp: GaussianProcess,
     :return: N x 3 numpy array of foces, Nx3 numpy array of uncertainties
     :rtype: (np.ndarray, np.ndarray)
     """
-    # Loop through individual atoms, cast to atomic environments,
-    # make predictions
+
+    forces = np.zeros((structure.nat, 3))
+    stds = np.zeros((structure.nat, 3))
+
+    if write_to_structure and structure.forces is None:
+        structure.forces = np.zeros((structure.nat, 3))
 
     forces = np.zeros(shape=(structure.nat, 3))
     stds = np.zeros(shape=(structure.nat, 3))
@@ -113,7 +131,7 @@ def predict_on_structure(structure: Structure, gp: GaussianProcess,
         if n not in selective_atoms and selective_atoms:
             continue
 
-        chemenv = AtomicEnvironment(structure, n, gp.cutoffs)
+        chemenv = AtomicEnvironment(structure, n, gp.cutoffs, cutoffs_mask=gp.hyps_mask)
 
         for i in range(3):
             force, var = gp.predict(chemenv, i + 1)
@@ -154,16 +172,19 @@ def predict_on_structure_par(structure: Structure,
     :rtype: (np.ndarray, np.ndarray)
     """
     # Just work in serial in the number of cpus is 1
-    if n_cpus is 1:
+    if n_cpus == 1:
         return predict_on_structure(structure=structure,
-                                    gp = gp,
+                                    gp=gp,
                                     n_cpus=n_cpus,
-                                    write_to_structure = write_to_structure,
-                                    selective_atoms =selective_atoms,
-                                    skipped_atom_value = skipped_atom_value)
+                                    write_to_structure=write_to_structure,
+                                    selective_atoms=selective_atoms,
+                                    skipped_atom_value=skipped_atom_value)
 
     forces = np.zeros(shape=(structure.nat, 3))
     stds = np.zeros(shape=(structure.nat, 3))
+
+    if write_to_structure and structure.forces is None:
+        structure.forces = np.zeros((structure.nat, 3))
 
     if selective_atoms:
         forces.fill(skipped_atom_value)
@@ -197,7 +218,7 @@ def predict_on_structure_par(structure: Structure,
         r = results[i].get()
         forces[i] = r[0]
         stds[i] = r[1]
-        if write_to_structure:
+        if write_to_structure and structure.forces is not None:
             structure.forces[i] = r[0]
             structure.stds[i] = r[1]
 
@@ -224,9 +245,14 @@ def predict_on_structure_en(structure: Structure, gp: GaussianProcess,
     :rtype: (np.ndarray, np.ndarray, np.ndarray)
     """
     # Set up local energy array
+    forces = np.zeros((structure.nat, 3))
+    stds = np.zeros((structure.nat, 3))
     local_energies = np.zeros(structure.nat)
     forces = np.zeros(shape=(structure.nat, 3))
     stds = np.zeros(shape=(structure.nat, 3))
+
+    if write_to_structure and structure.forces is None:
+        structure.forces = np.zeros((structure.nat, 3))
 
     if selective_atoms:
         forces.fill(skipped_atom_value)
@@ -242,13 +268,14 @@ def predict_on_structure_en(structure: Structure, gp: GaussianProcess,
         if selective_atoms and n not in selective_atoms:
             continue
 
-        chemenv = AtomicEnvironment(structure, n, gp.cutoffs)
+        chemenv = AtomicEnvironment(structure, n, gp.cutoffs, cutoffs_mask=gp.hyps_mask)
+
         for i in range(3):
             force, var = gp.predict(chemenv, i + 1)
             forces[n][i] = float(force)
             stds[n][i] = np.sqrt(np.abs(var))
 
-        if write_to_structure:
+        if write_to_structure and structure.forces is not None:
             structure.forces[n][i] = float(force)
             structure.stds[n][i] = np.sqrt(np.abs(var))
 
@@ -275,7 +302,15 @@ def predict_on_structure_par_en(structure: Structure, gp: GaussianProcess,
         N-length array of energies
     :rtype: (np.ndarray, np.ndarray, np.ndarray)
     """
+    # Work in serial if the number of cpus is 1
+    if n_cpus == 1:
+        predict_on_structure_en(structure, gp,
+                                n_cpus, write_to_structure,
+                                selective_atoms,
+                                skipped_atom_value)
 
+    forces = np.zeros((structure.nat, 3))
+    stds = np.zeros((structure.nat, 3))
     local_energies = np.zeros(structure.nat)
     forces = np.zeros(shape=(structure.nat, 3))
     stds = np.zeros(shape=(structure.nat, 3))

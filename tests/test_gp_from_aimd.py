@@ -1,17 +1,20 @@
-import pytest
 import numpy as np
 import pickle
+import pytest
+
+from copy import deepcopy
+from json import loads
 from glob import glob
 from os import remove
-from copy import deepcopy
 
 from flare.env import AtomicEnvironment
 from flare.struc import Structure
 from flare.gp import GaussianProcess
 from flare.mgp.mgp import MappedGaussianProcess
-from flare.gp_from_aimd import TrajectoryTrainer, subset_of_frame_by_element
-from json import loads
-from flare.env import AtomicEnvironment
+from flare.gp_from_aimd import TrajectoryTrainer,\
+                                    parse_trajectory_trainer_output
+from flare.utils.learner import subset_of_frame_by_element
+
 from .test_mgp_unit import all_mgp, all_gp, get_random_structure
 from .fake_gp import get_gp
 
@@ -67,7 +70,7 @@ def test_load_trained_gp_and_run(methanol_gp):
                            gp=methanol_gp,
                            rel_std_tolerance=0,
                            abs_std_tolerance=0,
-                           skip=15)
+                           skip=15, train_checkpoint_interval=10)
 
     tt.run()
     for f in glob(f"gp_from_aimd*"):
@@ -127,7 +130,7 @@ def test_seed_and_run():
                            max_atoms_from_frame=4,
                            output_name='meth_test',
                            model_format='pickle',
-                           checkpoint_interval=1,
+                           train_checkpoint_interval=1,
                            pre_train_atoms_per_element={'H': 1})
 
     tt.run()
@@ -177,8 +180,8 @@ def test_pred_on_elements():
                            pre_train_seed_frames=[frames[-1]],
                            max_atoms_from_frame=4,
                            output_name='meth_test',
-                           model_format='',
-                           checkpoint_interval=50,
+                           model_format='json',
+                           atom_checkpoint_interval=50,
                            pre_train_atoms_per_element={'H': 1},
                            predict_atoms_per_element={'H': 0,'C': 1,'O': 0})
     # Set to predict only on Carbon after training on H to ensure errors are
@@ -193,6 +196,9 @@ def test_pred_on_elements():
     assert the_gp.training_statistics['envs_by_species']['C']>2
 
     for f in glob(f"meth_test*"):
+        remove(f)
+
+    for f in glob(f"gp_from_aimd*"):
         remove(f)
 
 
@@ -252,3 +258,43 @@ def test_mgp_gpfa(all_mgp, all_gp):
                            abs_std_tolerance=0, abs_force_tolerance=0)
     assert tt.mgp is True
     tt.run()
+
+
+def test_parse_gpfa_output():
+    """
+    Compare parsing against known answers.
+    :return:
+    """
+    frames, gp_data = parse_trajectory_trainer_output(
+        './test_files/gpfa_parse_test.out', True)
+
+    assert len(frames) == 5
+    assert isinstance(frames[0], dict)
+    for frame in frames:
+        for key in ['species', 'positions', 'gp_forces', 'dft_forces',
+                    'gp_stds']:
+
+            assert len(frame[key]) == 6
+
+        assert len(frame['added_atoms']) == 0 or len(frame['added_atoms']) == 1
+
+        assert frame['maes_by_species']['C']
+        assert frame['maes_by_species'].get('H') is None
+
+
+    assert gp_data['init_stats']['N'] == 0
+    assert gp_data['init_stats']['species'] == []
+    assert gp_data['init_stats']['envs_by_species'] == {}
+
+    assert gp_data['cumulative_gp_size'][-1] > 2
+    assert len(gp_data['mae_by_elt']['C']) == 5
+
+    assert gp_data['pre_train_stats']['N'] == 9
+    assert gp_data['pre_train_stats']['envs_by_species']['C'] == 2
+    assert gp_data['pre_train_stats']['envs_by_species']['H'] == 5
+    assert gp_data['pre_train_stats']['envs_by_species']['O'] == 2
+    assert gp_data['pre_train_stats']['species'] == ['H', 'C', 'O']
+
+    assert gp_data['cumulative_gp_size'] == [0, 9, 9, 10, 11, 12, 13]
+
+

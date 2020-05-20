@@ -8,7 +8,7 @@ Energy, force, and stress information can be included which can then be
 used to train ML models.
 """
 import numpy as np
-from flare.util import element_to_Z, Z_to_element, NumpyEncoder
+from flare.utils.element_coder import element_to_Z, Z_to_element, NumpyEncoder
 from json import dumps, loads
 
 from typing import List, Union, Any
@@ -49,15 +49,11 @@ class Structure:
     :type stds: np.ndarray
     """
 
-    def __init__(self, cell: 'ndarray', species: Union[List[str],
-                                                          List[int]],
-                 positions: 'ndarray',
-                 mass_dict: dict = None,
-                 prev_positions: 'ndarray' =None,
-                 species_labels: List[str] = None,
-                 forces=None,
-                 stds=None):
-
+    def __init__(self, cell: 'ndarray', species: Union[List[str], List[int]],
+                 positions: 'ndarray', mass_dict: dict = None,
+                 prev_positions: 'ndarray' = None,
+                 species_labels: List[str] = None, energy=None,
+                 forces=None, stress=None, stds=None):
         # Set up individual Bravais lattice vectors
         self.cell = np.array(cell)
         self.vec1 = self.cell[0, :]
@@ -92,13 +88,11 @@ class Structure:
                                                           'same length'
             self.prev_positions = prev_positions
 
-        self.energy = None
-        self.stress = None
-
-        if forces is not None:
-            self.forces = np.array(forces)
-        else:
-            self.forces = np.zeros((len(positions), 3))
+        # assign structure labels
+        self.energy = energy
+        self.stress = stress
+        self.forces = forces
+        self.labels = self.get_labels()
 
         if stds is not None:
             self.stds = np.array(stds)
@@ -181,7 +175,7 @@ class Structure:
         into the unit cell. in_place flag controls if the wrapped positions
         are set in the class.
 
-        :param in_place: If true, set the current structure 
+        :param in_place: If true, set the current structure
 		positions to be the wrapped positions.
         :return: Cartesian coordinates of positions all in unit cell
 	:rtype: np.ndarray
@@ -199,6 +193,23 @@ class Structure:
             self.wrapped_positions = pos_wrap
 
         return pos_wrap
+
+    def get_labels(self):
+        labels = []
+        if self.energy is not None:
+            labels.append(self.energy)
+        if self.forces is not None:
+            unrolled_forces = self.forces.reshape(-1)
+            for force_comp in unrolled_forces:
+                labels.append(force_comp)
+        if self.stress is not None:
+            labels.extend([self.stress[0, 0], self.stress[0, 1],
+                           self.stress[0, 2], self.stress[1, 1],
+                           self.stress[1, 2], self.stress[2, 2]])
+
+        labels = np.array(labels)
+
+        return labels
 
     def indices_of_specie(self, specie: Union[int, str]) -> List[int]:
         """
@@ -261,7 +272,7 @@ class Structure:
         struc = Structure(cell=np.array(dictionary['cell']),
                           positions=np.array(dictionary['positions']),
                           species=dictionary['coded_species'],
-                          forces=dictionary.get('forces'),
+                          forces=np.array(dictionary.get('forces')),
                           mass_dict=dictionary.get('mass_dict'),
                           species_labels=dictionary.get('species_labels'))
 
@@ -289,9 +300,8 @@ class Structure:
         from ase import Atoms
         return Atoms(self.species_labels,
                      positions=self.positions,
-                     cell=self.cell, 
+                     cell=self.cell,
                      pbc=True)
-
 
     def to_pmg_structure(self):
         """
@@ -304,7 +314,11 @@ class Structure:
             raise ModuleNotFoundError("Pymatgen is not present. Please "
                                       "install Pymatgen and try again")
 
-        site_properties = {'force:': self.forces, 'std': self.stds}
+        if self.forces is None:
+            forces_temp = np.zeros((len(self.positions), 3))
+            site_properties = {'force:': forces_temp, 'std': self.stds}
+        else:
+            site_properties = {'force:': self.forces, 'std': self.stds}
 
         return pmgstruc.Structure(lattice=self.cell,
                                   species=self.species_labels,
@@ -452,7 +466,7 @@ class Structure:
 
 
 
-def get_unique_species(species: List[Any])-> (List, List[int]):
+def get_unique_species(species: List[Any]) -> (List, List[int]):
     """
     Returns a list of the unique species passed in, and a list of
     integers indexing them.

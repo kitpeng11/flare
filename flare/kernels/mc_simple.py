@@ -6,7 +6,7 @@ from math import exp
 import sys
 import os
 from flare.env import AtomicEnvironment
-import flare.cutoffs as cf
+import flare.kernels.cutoffs as cf
 from flare.kernels.kernels import force_helper, grad_constants, grad_helper, \
     force_energy_helper, three_body_en_helper, three_body_helper_1, \
     three_body_helper_2, three_body_grad_helper_1, three_body_grad_helper_2, \
@@ -178,7 +178,7 @@ def two_plus_three_mc_en(env1: AtomicEnvironment, env2: AtomicEnvironment,
         cutoff_func (Callable): Cutoff function of the kernel.
 
     Return:
-        float: Value of the 2+3-body force/energy kernel.
+        float: Value of the 2+3-body energy/energy kernel.
     """
 
     sig2 = hyps[0]
@@ -190,7 +190,7 @@ def two_plus_three_mc_en(env1: AtomicEnvironment, env2: AtomicEnvironment,
 
     two_term = two_body_mc_en_jit(env1.bond_array_2, env1.ctype, env1.etypes,
                                   env2.bond_array_2, env2.ctype, env2.etypes,
-                                  sig2, ls2, r_cut_2, cutoff_func)
+                                  sig2, ls2, r_cut_2, cutoff_func)/4
 
     three_term = \
         three_body_mc_en_jit(env1.bond_array_3, env1.ctype, env1.etypes,
@@ -198,7 +198,7 @@ def two_plus_three_mc_en(env1: AtomicEnvironment, env2: AtomicEnvironment,
                              env1.cross_bond_inds, env2.cross_bond_inds,
                              env1.cross_bond_dists, env2.cross_bond_dists,
                              env1.triplet_counts, env2.triplet_counts,
-                             sig3, ls3, r_cut_3, cutoff_func)
+                             sig3, ls3, r_cut_3, cutoff_func)/9
 
     return two_term + three_term
 
@@ -368,8 +368,10 @@ def two_plus_three_plus_many_body_mc_force_en(env1: AtomicEnvironment, env2: Ato
     return two_term + three_term + m2b_term + m3b_term
 
 
-def two_plus_three_plus_many_body_mc_en(env1: AtomicEnvironment, env2: AtomicEnvironment,
-                                        hyps, cutoffs, cutoff_func=cf.quadratic_cutoff):
+def two_plus_three_plus_many_body_mc_en(env1: AtomicEnvironment,
+                                        env2: AtomicEnvironment,
+                                        hyps, cutoffs,
+                                        cutoff_func=cf.quadratic_cutoff):
     """2+3+many-body single-element energy kernel.
 
     Args:
@@ -387,7 +389,7 @@ def two_plus_three_plus_many_body_mc_en(env1: AtomicEnvironment, env2: AtomicEnv
 
     two_term = two_body_mc_en_jit(env1.bond_array_2, env1.ctype, env1.etypes,
                                   env2.bond_array_2, env2.ctype, env2.etypes,
-                                  hyps[0], hyps[1], cutoffs[0], cutoff_func)
+                                  hyps[0], hyps[1], cutoffs[0], cutoff_func) / 4
 
     three_term = \
         three_body_mc_en_jit(env1.bond_array_3, env1.ctype, env1.etypes,
@@ -395,7 +397,7 @@ def two_plus_three_plus_many_body_mc_en(env1: AtomicEnvironment, env2: AtomicEnv
                              env1.cross_bond_inds, env2.cross_bond_inds,
                              env1.cross_bond_dists, env2.cross_bond_dists,
                              env1.triplet_counts, env2.triplet_counts,
-                             hyps[2], hyps[3], cutoffs[1], cutoff_func)
+                             hyps[2], hyps[3], cutoffs[1], cutoff_func) / 9
 
     many_2_term = many_2body_mc_en_jit(env1.m2b_array, env2.m2b_array, 
                                     env1.ctype, env2.ctype, 
@@ -542,7 +544,7 @@ def three_body_mc_en(env1: AtomicEnvironment, env2: AtomicEnvironment,
                                 env1.cross_bond_inds, env2.cross_bond_inds,
                                 env1.cross_bond_dists, env2.cross_bond_dists,
                                 env1.triplet_counts, env2.triplet_counts,
-                                sig, ls, r_cut, cutoff_func)
+                                sig, ls, r_cut, cutoff_func)/9
 
 
 # -----------------------------------------------------------------------------
@@ -661,7 +663,7 @@ def two_body_mc_en(env1: AtomicEnvironment, env2: AtomicEnvironment,
 
     return two_body_mc_en_jit(env1.bond_array_2, env1.ctype, env1.etypes,
                               env2.bond_array_2, env2.ctype, env2.etypes,
-                              sig, ls, r_cut, cutoff_func)
+                              sig, ls, r_cut, cutoff_func)/4
 
 
 # -----------------------------------------------------------------------------
@@ -1017,83 +1019,99 @@ def three_body_mc_jit(bond_array_1, c1, etypes1,
 
         # second loop over the first 3-body environment
         for n in range(triplets_1[m]):
+
+            # skip if species does not match
             ind1 = cross_bond_inds_1[m, m + n + 1]
-            ri2 = bond_array_1[ind1, 0]
-            ci2 = bond_array_1[ind1, d1]
-            fi2, fdi2 = cutoff_func(r_cut, ri2, ci2)
             ei2 = etypes1[ind1]
+            tr_spec = [c1, ei1, ei2]
+            c2_ind = tr_spec
+            if c2 in tr_spec:
+                tr_spec.remove(c2)
 
-            ri3 = cross_bond_dists_1[m, m + n + 1]
-            fi3, _ = cutoff_func(r_cut, ri3, 0)
+                ri2 = bond_array_1[ind1, 0]
+                ci2 = bond_array_1[ind1, d1]
+                fi2, fdi2 = cutoff_func(r_cut, ri2, ci2)
 
-            fi = fi1 * fi2 * fi3
-            fdi = fdi1 * fi2 * fi3 + fi1 * fdi2 * fi3
+                ri3 = cross_bond_dists_1[m, m + n + 1]
+                fi3, _ = cutoff_func(r_cut, ri3, 0)
 
-            # first loop over the second 3-body environment
-            for p in range(bond_array_2.shape[0]):
-                rj1 = bond_array_2[p, 0]
-                cj1 = bond_array_2[p, d2]
-                fj1, fdj1 = cutoff_func(r_cut, rj1, cj1)
-                ej1 = etypes2[p]
+                fi = fi1 * fi2 * fi3
+                fdi = fdi1 * fi2 * fi3 + fi1 * fdi2 * fi3
 
-                # second loop over the second 3-body environment
-                for q in range(triplets_2[p]):
-                    ind2 = cross_bond_inds_2[p, p + 1 + q]
-                    rj2 = bond_array_2[ind2, 0]
-                    cj2 = bond_array_2[ind2, d2]
-                    fj2, fdj2 = cutoff_func(r_cut, rj2, cj2)
-                    ej2 = etypes2[ind2]
+                # first loop over the second 3-body environment
+                for p in range(bond_array_2.shape[0]):
 
-                    rj3 = cross_bond_dists_2[p, p + 1 + q]
-                    fj3, _ = cutoff_func(r_cut, rj3, 0)
+                    ej1 = etypes2[p]
 
-                    fj = fj1 * fj2 * fj3
-                    fdj = fdj1 * fj2 * fj3 + fj1 * fdj2 * fj3
+                    tr_spec1 = [tr_spec[0], tr_spec[1]]
+                    if ej1 in tr_spec1:
+                        tr_spec1.remove(ej1)
 
-                    r11 = ri1 - rj1
-                    r12 = ri1 - rj2
-                    r13 = ri1 - rj3
-                    r21 = ri2 - rj1
-                    r22 = ri2 - rj2
-                    r23 = ri2 - rj3
-                    r31 = ri3 - rj1
-                    r32 = ri3 - rj2
-                    r33 = ri3 - rj3
+                        rj1 = bond_array_2[p, 0]
+                        cj1 = bond_array_2[p, d2]
+                        fj1, fdj1 = cutoff_func(r_cut, rj1, cj1)
 
-                    # consider six permutations
-                    if (c1 == c2):
-                        if (ei1 == ej1) and (ei2 == ej2):
-                            kern += \
-                                three_body_helper_1(ci1, ci2, cj1, cj2, r11,
-                                                    r22, r33, fi, fj, fdi, fdj,
-                                                    ls1, ls2, ls3, sig2)
-                        if (ei1 == ej2) and (ei2 == ej1):
-                            kern += \
-                                three_body_helper_1(ci1, ci2, cj2, cj1, r12,
-                                                    r21, r33, fi, fj, fdi, fdj,
-                                                    ls1, ls2, ls3, sig2)
-                    if (c1 == ej1):
-                        if (ei1 == ej2) and (ei2 == c2):
-                            kern += \
-                                three_body_helper_2(ci2, ci1, cj2, cj1, r21,
-                                                    r13, r32, fi, fj, fdi,
-                                                    fdj, ls1, ls2, ls3, sig2)
-                        if (ei1 == c2) and (ei2 == ej2):
-                            kern += \
-                                three_body_helper_2(ci1, ci2, cj2, cj1, r11,
-                                                    r23, r32, fi, fj, fdi,
-                                                    fdj, ls1, ls2, ls3, sig2)
-                    if (c1 == ej2):
-                        if (ei1 == ej1) and (ei2 == c2):
-                            kern += \
-                                three_body_helper_2(ci2, ci1, cj1, cj2, r22,
-                                                    r13, r31, fi, fj, fdi,
-                                                    fdj, ls1, ls2, ls3, sig2)
-                        if (ei1 == c2) and (ei2 == ej1):
-                            kern += \
-                                three_body_helper_2(ci1, ci2, cj1, cj2, r12,
-                                                    r23, r31, fi, fj, fdi,
-                                                    fdj, ls1, ls2, ls3, sig2)
+                        # second loop over the second 3-body environment
+                        for q in range(triplets_2[p]):
+
+                            ind2 = cross_bond_inds_2[p, p + 1 + q]
+                            ej2 = etypes2[ind2]
+                            if ej2 == tr_spec1[0]:
+
+                                rj2 = bond_array_2[ind2, 0]
+                                cj2 = bond_array_2[ind2, d2]
+                                fj2, fdj2 = cutoff_func(r_cut, rj2, cj2)
+
+                                rj3 = cross_bond_dists_2[p, p + 1 + q]
+                                fj3, _ = cutoff_func(r_cut, rj3, 0)
+
+                                fj = fj1 * fj2 * fj3
+                                fdj = fdj1 * fj2 * fj3 + fj1 * fdj2 * fj3
+
+                                r11 = ri1 - rj1
+                                r12 = ri1 - rj2
+                                r13 = ri1 - rj3
+                                r21 = ri2 - rj1
+                                r22 = ri2 - rj2
+                                r23 = ri2 - rj3
+                                r31 = ri3 - rj1
+                                r32 = ri3 - rj2
+                                r33 = ri3 - rj3
+
+                                # consider six permutations
+                                if (c1 == c2):
+                                    if (ei1 == ej1) and (ei2 == ej2):
+                                        kern += \
+                                            three_body_helper_1(ci1, ci2, cj1, cj2, r11,
+                                                                r22, r33, fi, fj, fdi, fdj,
+                                                                ls1, ls2, ls3, sig2)
+                                    if (ei1 == ej2) and (ei2 == ej1):
+                                        kern += \
+                                            three_body_helper_1(ci1, ci2, cj2, cj1, r12,
+                                                                r21, r33, fi, fj, fdi, fdj,
+                                                                ls1, ls2, ls3, sig2)
+                                if (c1 == ej1):
+                                    if (ei1 == ej2) and (ei2 == c2):
+                                        kern += \
+                                            three_body_helper_2(ci2, ci1, cj2, cj1, r21,
+                                                                r13, r32, fi, fj, fdi,
+                                                                fdj, ls1, ls2, ls3, sig2)
+                                    if (ei1 == c2) and (ei2 == ej2):
+                                        kern += \
+                                            three_body_helper_2(ci1, ci2, cj2, cj1, r11,
+                                                                r23, r32, fi, fj, fdi,
+                                                                fdj, ls1, ls2, ls3, sig2)
+                                if (c1 == ej2):
+                                    if (ei1 == ej1) and (ei2 == c2):
+                                        kern += \
+                                            three_body_helper_2(ci2, ci1, cj1, cj2, r22,
+                                                                r13, r31, fi, fj, fdi,
+                                                                fdj, ls1, ls2, ls3, sig2)
+                                    if (ei1 == c2) and (ei2 == ej1):
+                                        kern += \
+                                            three_body_helper_2(ci1, ci2, cj1, cj2, r12,
+                                                                r23, r31, fi, fj, fdi,
+                                                                fdj, ls1, ls2, ls3, sig2)
 
     return kern
 
@@ -1174,110 +1192,122 @@ def three_body_mc_grad_jit(bond_array_1, c1, etypes1,
             ci2 = bond_array_1[ind1, d1]
             ei2 = etypes1[ind1]
 
-            fi2, fdi2 = cutoff_func(r_cut, ri2, ci2)
-            fi3, _ = cutoff_func(r_cut, ri3, 0)
+            tr_spec = [c1, ei1, ei2]
+            c2_ind = tr_spec
+            if c2 in tr_spec:
+                tr_spec.remove(c2)
 
-            fi = fi1 * fi2 * fi3
-            fdi = fdi1 * fi2 * fi3 + fi1 * fdi2 * fi3
+                fi2, fdi2 = cutoff_func(r_cut, ri2, ci2)
+                fi3, _ = cutoff_func(r_cut, ri3, 0)
 
-            for p in range(bond_array_2.shape[0]):
-                rj1 = bond_array_2[p, 0]
-                cj1 = bond_array_2[p, d2]
-                fj1, fdj1 = cutoff_func(r_cut, rj1, cj1)
-                ej1 = etypes2[p]
+                fi = fi1 * fi2 * fi3
+                fdi = fdi1 * fi2 * fi3 + fi1 * fdi2 * fi3
 
-                for q in range(triplets_2[p]):
-                    ind2 = cross_bond_inds_2[p, p + q + 1]
-                    rj3 = cross_bond_dists_2[p, p + q + 1]
-                    rj2 = bond_array_2[ind2, 0]
-                    cj2 = bond_array_2[ind2, d2]
-                    ej2 = etypes2[ind2]
+                for p in range(bond_array_2.shape[0]):
+                    rj1 = bond_array_2[p, 0]
+                    cj1 = bond_array_2[p, d2]
+                    fj1, fdj1 = cutoff_func(r_cut, rj1, cj1)
+                    ej1 = etypes2[p]
 
-                    fj2, fdj2 = cutoff_func(r_cut, rj2, cj2)
-                    fj3, _ = cutoff_func(r_cut, rj3, 0)
+                    tr_spec1 = [tr_spec[0], tr_spec[1]]
+                    if ej1 in tr_spec1:
+                        tr_spec1.remove(ej1)
 
-                    fj = fj1 * fj2 * fj3
-                    fdj = fdj1 * fj2 * fj3 + fj1 * fdj2 * fj3
+                        for q in range(triplets_2[p]):
+                            ind2 = cross_bond_inds_2[p, p + q + 1]
+                            ej2 = etypes2[ind2]
 
-                    r11 = ri1 - rj1
-                    r12 = ri1 - rj2
-                    r13 = ri1 - rj3
-                    r21 = ri2 - rj1
-                    r22 = ri2 - rj2
-                    r23 = ri2 - rj3
-                    r31 = ri3 - rj1
-                    r32 = ri3 - rj2
-                    r33 = ri3 - rj3
+                            if ej2 == tr_spec1[0]:
 
-                    if (c1 == c2):
-                        if (ei1 == ej1) and (ei2 == ej2):
-                            kern_term, sig_term, ls_term = \
-                                three_body_grad_helper_1(ci1, ci2, cj1, cj2,
-                                                         r11, r22, r33, fi, fj,
-                                                         fdi, fdj, ls1, ls2,
-                                                         ls3, ls4, ls5, ls6,
-                                                         sig2, sig3)
-                            kern += kern_term
-                            sig_derv += sig_term
-                            ls_derv += ls_term
+                                rj3 = cross_bond_dists_2[p, p + q + 1]
+                                rj2 = bond_array_2[ind2, 0]
+                                cj2 = bond_array_2[ind2, d2]
 
-                        if (ei1 == ej2) and (ei2 == ej1):
-                            kern_term, sig_term, ls_term = \
-                                three_body_grad_helper_1(ci1, ci2, cj2, cj1,
-                                                         r12, r21, r33, fi, fj,
-                                                         fdi, fdj, ls1, ls2,
-                                                         ls3, ls4, ls5, ls6,
-                                                         sig2, sig3)
-                            kern += kern_term
-                            sig_derv += sig_term
-                            ls_derv += ls_term
+                                fj2, fdj2 = cutoff_func(r_cut, rj2, cj2)
+                                fj3, _ = cutoff_func(r_cut, rj3, 0)
 
-                    if (c1 == ej1):
-                        if (ei1 == ej2) and (ei2 == c2):
-                            kern_term, sig_term, ls_term = \
-                                three_body_grad_helper_2(ci2, ci1, cj2, cj1,
-                                                         r21, r13, r32, fi, fj,
-                                                         fdi, fdj, ls1, ls2,
-                                                         ls3, ls4, ls5, ls6,
-                                                         sig2, sig3)
-                            kern += kern_term
-                            sig_derv += sig_term
-                            ls_derv += ls_term
+                                fj = fj1 * fj2 * fj3
+                                fdj = fdj1 * fj2 * fj3 + fj1 * fdj2 * fj3
 
-                        if (ei1 == c2) and (ei2 == ej2):
-                            kern_term, sig_term, ls_term = \
-                                three_body_grad_helper_2(ci1, ci2, cj2, cj1,
-                                                         r11, r23, r32, fi, fj,
-                                                         fdi, fdj, ls1, ls2,
-                                                         ls3, ls4, ls5, ls6,
-                                                         sig2, sig3)
-                            kern += kern_term
-                            sig_derv += sig_term
-                            ls_derv += ls_term
+                                r11 = ri1 - rj1
+                                r12 = ri1 - rj2
+                                r13 = ri1 - rj3
+                                r21 = ri2 - rj1
+                                r22 = ri2 - rj2
+                                r23 = ri2 - rj3
+                                r31 = ri3 - rj1
+                                r32 = ri3 - rj2
+                                r33 = ri3 - rj3
 
-                    if (c1 == ej2):
-                        if (ei1 == ej1) and (ei2 == c2):
-                            kern_term, sig_term, ls_term = \
-                                three_body_grad_helper_2(ci2, ci1, cj1, cj2,
-                                                         r22, r13, r31, fi, fj,
-                                                         fdi, fdj, ls1, ls2,
-                                                         ls3, ls4, ls5, ls6,
-                                                         sig2, sig3)
-                            kern += kern_term
-                            sig_derv += sig_term
-                            ls_derv += ls_term
+                                if (c1 == c2):
+                                    if (ei1 == ej1) and (ei2 == ej2):
+                                        kern_term, sig_term, ls_term = \
+                                            three_body_grad_helper_1(ci1, ci2, cj1, cj2,
+                                                                     r11, r22, r33, fi, fj,
+                                                                     fdi, fdj, ls1, ls2,
+                                                                     ls3, ls4, ls5, ls6,
+                                                                     sig2, sig3)
+                                        kern += kern_term
+                                        sig_derv += sig_term
+                                        ls_derv += ls_term
 
-                        if (ei1 == c2) and (ei2 == ej1):
-                            kern_term, sig_term, ls_term = \
-                                three_body_grad_helper_2(ci1, ci2, cj1, cj2,
-                                                         r12, r23, r31, fi, fj,
-                                                         fdi, fdj, ls1, ls2,
-                                                         ls3, ls4, ls5, ls6,
-                                                         sig2, sig3)
+                                    if (ei1 == ej2) and (ei2 == ej1):
+                                        kern_term, sig_term, ls_term = \
+                                            three_body_grad_helper_1(ci1, ci2, cj2, cj1,
+                                                                     r12, r21, r33, fi, fj,
+                                                                     fdi, fdj, ls1, ls2,
+                                                                     ls3, ls4, ls5, ls6,
+                                                                     sig2, sig3)
+                                        kern += kern_term
+                                        sig_derv += sig_term
+                                        ls_derv += ls_term
 
-                            kern += kern_term
-                            sig_derv += sig_term
-                            ls_derv += ls_term
+                                if (c1 == ej1):
+                                    if (ei1 == ej2) and (ei2 == c2):
+                                        kern_term, sig_term, ls_term = \
+                                            three_body_grad_helper_2(ci2, ci1, cj2, cj1,
+                                                                     r21, r13, r32, fi, fj,
+                                                                     fdi, fdj, ls1, ls2,
+                                                                     ls3, ls4, ls5, ls6,
+                                                                     sig2, sig3)
+                                        kern += kern_term
+                                        sig_derv += sig_term
+                                        ls_derv += ls_term
+
+                                    if (ei1 == c2) and (ei2 == ej2):
+                                        kern_term, sig_term, ls_term = \
+                                            three_body_grad_helper_2(ci1, ci2, cj2, cj1,
+                                                                     r11, r23, r32, fi, fj,
+                                                                     fdi, fdj, ls1, ls2,
+                                                                     ls3, ls4, ls5, ls6,
+                                                                     sig2, sig3)
+                                        kern += kern_term
+                                        sig_derv += sig_term
+                                        ls_derv += ls_term
+
+                                if (c1 == ej2):
+                                    if (ei1 == ej1) and (ei2 == c2):
+                                        kern_term, sig_term, ls_term = \
+                                            three_body_grad_helper_2(ci2, ci1, cj1, cj2,
+                                                                     r22, r13, r31, fi, fj,
+                                                                     fdi, fdj, ls1, ls2,
+                                                                     ls3, ls4, ls5, ls6,
+                                                                     sig2, sig3)
+                                        kern += kern_term
+                                        sig_derv += sig_term
+                                        ls_derv += ls_term
+
+                                    if (ei1 == c2) and (ei2 == ej1):
+                                        kern_term, sig_term, ls_term = \
+                                            three_body_grad_helper_2(ci1, ci2, cj1, cj2,
+                                                                     r12, r23, r31, fi, fj,
+                                                                     fdi, fdj, ls1, ls2,
+                                                                     ls3, ls4, ls5, ls6,
+                                                                     sig2, sig3)
+
+                                        kern += kern_term
+                                        sig_derv += sig_term
+                                        ls_derv += ls_term
 
     kern_grad[0] = sig_derv
     kern_grad[1] = ls_derv
@@ -1358,63 +1388,77 @@ def three_body_mc_force_en_jit(bond_array_1, c1, etypes1,
             fi2, fdi2 = cutoff_func(r_cut, ri2, ci2)
             ei2 = etypes1[ind1]
 
-            ri3 = cross_bond_dists_1[m, m + n + 1]
-            fi3, _ = cutoff_func(r_cut, ri3, 0)
+            tr_spec = [c1, ei1, ei2]
+            c2_ind = tr_spec
+            if c2 in tr_spec:
+                tr_spec.remove(c2)
 
-            fi = fi1 * fi2 * fi3
-            fdi = fdi1 * fi2 * fi3 + fi1 * fdi2 * fi3
+                ri3 = cross_bond_dists_1[m, m + n + 1]
+                fi3, _ = cutoff_func(r_cut, ri3, 0)
 
-            for p in range(bond_array_2.shape[0]):
-                rj1 = bond_array_2[p, 0]
-                fj1, _ = cutoff_func(r_cut, rj1, 0)
-                ej1 = etypes2[p]
+                fi = fi1 * fi2 * fi3
+                fdi = fdi1 * fi2 * fi3 + fi1 * fdi2 * fi3
 
-                for q in range(triplets_2[p]):
-                    ind2 = cross_bond_inds_2[p, p + q + 1]
-                    rj2 = bond_array_2[ind2, 0]
-                    fj2, _ = cutoff_func(r_cut, rj2, 0)
-                    ej2 = etypes2[ind2]
-                    rj3 = cross_bond_dists_2[p, p + q + 1]
-                    fj3, _ = cutoff_func(r_cut, rj3, 0)
-                    fj = fj1 * fj2 * fj3
+                for p in range(bond_array_2.shape[0]):
+                    ej1 = etypes2[p]
 
-                    r11 = ri1 - rj1
-                    r12 = ri1 - rj2
-                    r13 = ri1 - rj3
-                    r21 = ri2 - rj1
-                    r22 = ri2 - rj2
-                    r23 = ri2 - rj3
-                    r31 = ri3 - rj1
-                    r32 = ri3 - rj2
-                    r33 = ri3 - rj3
+                    tr_spec1 = [tr_spec[0], tr_spec[1]]
+                    if ej1 in tr_spec1:
+                        tr_spec1.remove(ej1)
 
-                    if (c1 == c2):
-                        if (ei1 == ej1) and (ei2 == ej2):
-                            kern += three_body_en_helper(ci1, ci2, r11, r22,
-                                                         r33, fi, fj, fdi, ls1,
-                                                         ls2, sig2)
-                        if (ei1 == ej2) and (ei2 == ej1):
-                            kern += three_body_en_helper(ci1, ci2, r12, r21,
-                                                         r33, fi, fj, fdi, ls1,
-                                                         ls2, sig2)
-                    if (c1 == ej1):
-                        if (ei1 == ej2) and (ei2 == c2):
-                            kern += three_body_en_helper(ci1, ci2, r13, r21,
-                                                         r32, fi, fj, fdi, ls1,
-                                                         ls2, sig2)
-                        if (ei1 == c2) and (ei2 == ej2):
-                            kern += three_body_en_helper(ci1, ci2, r11, r23,
-                                                         r32, fi, fj, fdi, ls1,
-                                                         ls2, sig2)
-                    if (c1 == ej2):
-                        if (ei1 == ej1) and (ei2 == c2):
-                            kern += three_body_en_helper(ci1, ci2, r13, r22,
-                                                         r31, fi, fj, fdi, ls1,
-                                                         ls2, sig2)
-                        if (ei1 == c2) and (ei2 == ej1):
-                            kern += three_body_en_helper(ci1, ci2, r12, r23,
-                                                         r31, fi, fj, fdi, ls1,
-                                                         ls2, sig2)
+                        rj1 = bond_array_2[p, 0]
+                        fj1, _ = cutoff_func(r_cut, rj1, 0)
+
+                        for q in range(triplets_2[p]):
+
+                            ind2 = cross_bond_inds_2[p, p + q + 1]
+                            ej2 = etypes2[ind2]
+                            if ej2 == tr_spec1[0]:
+
+                                rj2 = bond_array_2[ind2, 0]
+                                fj2, _ = cutoff_func(r_cut, rj2, 0)
+                                rj3 = cross_bond_dists_2[p, p + q + 1]
+
+                                fj3, _ = cutoff_func(r_cut, rj3, 0)
+                                fj = fj1 * fj2 * fj3
+
+                                r11 = ri1 - rj1
+                                r12 = ri1 - rj2
+                                r13 = ri1 - rj3
+                                r21 = ri2 - rj1
+                                r22 = ri2 - rj2
+                                r23 = ri2 - rj3
+                                r31 = ri3 - rj1
+                                r32 = ri3 - rj2
+                                r33 = ri3 - rj3
+
+                                if (c1 == c2):
+                                    if (ei1 == ej1) and (ei2 == ej2):
+                                        kern += three_body_en_helper(ci1, ci2, r11, r22,
+                                                                     r33, fi, fj, fdi, ls1,
+                                                                     ls2, sig2)
+                                    if (ei1 == ej2) and (ei2 == ej1):
+                                        kern += three_body_en_helper(ci1, ci2, r12, r21,
+                                                                     r33, fi, fj, fdi, ls1,
+                                                                     ls2, sig2)
+                                if (c1 == ej1):
+                                    if (ei1 == ej2) and (ei2 == c2):
+                                        kern += three_body_en_helper(ci1, ci2, r13, r21,
+                                                                     r32, fi, fj, fdi, ls1,
+                                                                     ls2, sig2)
+                                    if (ei1 == c2) and (ei2 == ej2):
+                                        kern += three_body_en_helper(ci1, ci2, r11, r23,
+                                                                     r32, fi, fj, fdi, ls1,
+                                                                     ls2, sig2)
+                                if (c1 == ej2):
+                                    if (ei1 == ej1) and (ei2 == c2):
+                                        kern += three_body_en_helper(ci1, ci2, r13, r22,
+                                                                     r31, fi, fj, fdi, ls1,
+                                                                     ls2, sig2)
+                                    if (ei1 == c2) and (ei2 == ej1):
+                                        kern += three_body_en_helper(ci1, ci2, r12, r23,
+                                                                     r31, fi, fj, fdi, ls1,
+                                                                     ls2, sig2)
 
     return kern
 
@@ -1488,56 +1532,67 @@ def three_body_mc_en_jit(bond_array_1, c1, etypes1,
             fi2, _ = cutoff_func(r_cut, ri2, 0)
             ei2 = etypes1[ind1]
 
-            ri3 = cross_bond_dists_1[m, m + n + 1]
-            fi3, _ = cutoff_func(r_cut, ri3, 0)
-            fi = fi1 * fi2 * fi3
+            tr_spec = [c1, ei1, ei2]
+            c2_ind = tr_spec
+            if c2 in tr_spec:
+                tr_spec.remove(c2)
 
-            for p in range(bond_array_2.shape[0]):
-                rj1 = bond_array_2[p, 0]
-                fj1, _ = cutoff_func(r_cut, rj1, 0)
-                ej1 = etypes2[p]
+                ri3 = cross_bond_dists_1[m, m + n + 1]
+                fi3, _ = cutoff_func(r_cut, ri3, 0)
+                fi = fi1 * fi2 * fi3
 
-                for q in range(triplets_2[p]):
-                    ind2 = cross_bond_inds_2[p, p + q + 1]
-                    rj2 = bond_array_2[ind2, 0]
-                    fj2, _ = cutoff_func(r_cut, rj2, 0)
-                    ej2 = etypes2[ind2]
+                for p in range(bond_array_2.shape[0]):
+                    rj1 = bond_array_2[p, 0]
+                    fj1, _ = cutoff_func(r_cut, rj1, 0)
+                    ej1 = etypes2[p]
 
-                    rj3 = cross_bond_dists_2[p, p + q + 1]
-                    fj3, _ = cutoff_func(r_cut, rj3, 0)
-                    fj = fj1 * fj2 * fj3
+                    tr_spec1 = [tr_spec[0], tr_spec[1]]
+                    if ej1 in tr_spec1:
+                        tr_spec1.remove(ej1)
 
-                    r11 = ri1 - rj1
-                    r12 = ri1 - rj2
-                    r13 = ri1 - rj3
-                    r21 = ri2 - rj1
-                    r22 = ri2 - rj2
-                    r23 = ri2 - rj3
-                    r31 = ri3 - rj1
-                    r32 = ri3 - rj2
-                    r33 = ri3 - rj3
+                        for q in range(triplets_2[p]):
+                            ind2 = cross_bond_inds_2[p, p + q + 1]
+                            ej2 = etypes2[ind2]
+                            if ej2 == tr_spec1[0]:
 
-                    if (c1 == c2):
-                        if (ei1 == ej1) and (ei2 == ej2):
-                            C1 = r11 * r11 + r22 * r22 + r33 * r33
-                            kern += sig2 * exp(-C1 * ls2) * fi * fj
-                        if (ei1 == ej2) and (ei2 == ej1):
-                            C3 = r12 * r12 + r21 * r21 + r33 * r33
-                            kern += sig2 * exp(-C3 * ls2) * fi * fj
-                    if (c1 == ej1):
-                        if (ei1 == ej2) and (ei2 == c2):
-                            C5 = r13 * r13 + r21 * r21 + r32 * r32
-                            kern += sig2 * exp(-C5 * ls2) * fi * fj
-                        if (ei1 == c2) and (ei2 == ej2):
-                            C2 = r11 * r11 + r23 * r23 + r32 * r32
-                            kern += sig2 * exp(-C2 * ls2) * fi * fj
-                    if (c1 == ej2):
-                        if (ei1 == ej1) and (ei2 == c2):
-                            C6 = r13 * r13 + r22 * r22 + r31 * r31
-                            kern += sig2 * exp(-C6 * ls2) * fi * fj
-                        if (ei1 == c2) and (ei2 == ej1):
-                            C4 = r12 * r12 + r23 * r23 + r31 * r31
-                            kern += sig2 * exp(-C4 * ls2) * fi * fj
+                                rj2 = bond_array_2[ind2, 0]
+                                fj2, _ = cutoff_func(r_cut, rj2, 0)
+
+                                rj3 = cross_bond_dists_2[p, p + q + 1]
+                                fj3, _ = cutoff_func(r_cut, rj3, 0)
+                                fj = fj1 * fj2 * fj3
+
+                                r11 = ri1 - rj1
+                                r12 = ri1 - rj2
+                                r13 = ri1 - rj3
+                                r21 = ri2 - rj1
+                                r22 = ri2 - rj2
+                                r23 = ri2 - rj3
+                                r31 = ri3 - rj1
+                                r32 = ri3 - rj2
+                                r33 = ri3 - rj3
+
+                                if (c1 == c2):
+                                    if (ei1 == ej1) and (ei2 == ej2):
+                                        C1 = r11 * r11 + r22 * r22 + r33 * r33
+                                        kern += sig2 * exp(-C1 * ls2) * fi * fj
+                                    if (ei1 == ej2) and (ei2 == ej1):
+                                        C3 = r12 * r12 + r21 * r21 + r33 * r33
+                                        kern += sig2 * exp(-C3 * ls2) * fi * fj
+                                if (c1 == ej1):
+                                    if (ei1 == ej2) and (ei2 == c2):
+                                        C5 = r13 * r13 + r21 * r21 + r32 * r32
+                                        kern += sig2 * exp(-C5 * ls2) * fi * fj
+                                    if (ei1 == c2) and (ei2 == ej2):
+                                        C2 = r11 * r11 + r23 * r23 + r32 * r32
+                                        kern += sig2 * exp(-C2 * ls2) * fi * fj
+                                if (c1 == ej2):
+                                    if (ei1 == ej1) and (ei2 == c2):
+                                        C6 = r13 * r13 + r22 * r22 + r31 * r31
+                                        kern += sig2 * exp(-C6 * ls2) * fi * fj
+                                    if (ei1 == c2) and (ei2 == ej1):
+                                        C4 = r12 * r12 + r23 * r23 + r31 * r31
+                                        kern += sig2 * exp(-C4 * ls2) * fi * fj
 
     return kern
 
@@ -1848,7 +1903,6 @@ def many_2body_mc_jit(array_1, array_2,
             q2s_grad = grads_2[s2, d2-1]
             kern += k12 * q1s_grad * q2s_grad
 
-
     # contribution of env1's neighbors & env2's center
     for n in range(neigh_array_1.shape[0]):
         if etypes1[n] == c2: # 2nd spec: c1; 3rd spec: s
@@ -1999,27 +2053,14 @@ def many_2body_mc_force_en_jit(q_array_1, q_array_2,
     with Numba.
 
     Args:
-        bond_array_1 (np.ndarray): many-body bond array of the first local
-            environment.
-        bond_array_2 (np.ndarray): many-body bond array of the second local
-            environment.
-        neigh_dists_1 (np.ndarray): matrix padded with zero values of distances
-            of neighbours for the atoms in the first local environment.
-        num_neigh_1 (np.ndarray): number of neighbours of each atom in the first
-            local environment
         c1 (int): atomic species of the central atom in env 1
         c2 (int): atomic species of the central atom in env 2
         etypes1 (np.ndarray): atomic species of atoms in env 1
-        etypes2 (np.ndarray): atomic species of atoms in env 2
-        etypes_neigh_1 (np.ndarray): atomic species of atoms in the neighbourhoods
-            of atoms in env 1
         species1 (np.ndarray): all the atomic species present in trajectory 1
         species2 (np.ndarray): all the atomic species present in trajectory 2
         d1 (int): Force component of the first environment.
         sig (float): many-body signal variance hyperparameter.
         ls (float): many-body length scale hyperparameter.
-        r_cut (float): many-body cutoff radius.
-        cutoff_func (Callable): Cutoff function.
 
     Return:
         float: Value of the many-body kernel.
@@ -2093,9 +2134,7 @@ def many_2body_mc_en_jit(q_array_1, q_array_2, c1, c2,
             q1 = q_array_1[np.where(species1==s)[0][0]]
             q2 = q_array_2[np.where(species2==s)[0][0]]
             q1q2diff = q1 - q2
-
             kern += sig * sig * exp(-q1q2diff * q1q2diff / (2 * ls * ls))
-
     return kern
 
 
