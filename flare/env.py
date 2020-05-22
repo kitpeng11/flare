@@ -618,7 +618,7 @@ def get_m2_body_arrays(positions, atom: int, cell, cutoff: float, species,
         environment.
     """
     # Get distances, positions, species and indexes of neighbouring atoms
-    bond_array_mb, __, etypes, bond_inds = get_2_body_arrays(
+    bond_array_mb, _, etypes, bond_inds = get_2_body_arrays(
         positions, atom, cell, cutoff, species, sweep)
 
     species_list = np.array(list(set(species)), dtype=np.int8)
@@ -636,7 +636,7 @@ def get_m2_body_arrays(positions, atom: int, cell, cutoff: float, species,
 
     # get coordination number of all neighbor atoms for each species
     for i in range(n_bonds):
-        neigh_bond_array, _, neigh_etypes, _ = get_2_body_arrays(positions, 
+        neigh_bond_array, __, neigh_etypes, ___ = get_2_body_arrays(positions, 
             bond_inds[i], cell, cutoff, species, sweep)
         for s in range(n_specs):
             qs_neigh[i, s] = q_value_mc(neigh_bond_array[:, 0], cutoff,
@@ -647,7 +647,7 @@ def get_m2_body_arrays(positions, atom: int, cell, cutoff: float, species,
         ri = bond_array_mb[i, 0]
         for d in range(3):
             ci = bond_array_mb[i, d+1]
-            _, q_neigh_grads[i, d] = q_func(ri, ci, cutoff, cutoff_func)
+            ____, q_neigh_grads[i, d] = q_func(ri, ci, cutoff, cutoff_func)
 
     # get grads of the center atom
     q_grads =  q2_grads_mc(q_neigh_grads, species_list, etypes)

@@ -257,7 +257,6 @@ def two_plus_three_plus_many_body_mc(env1: AtomicEnvironment, env2: AtomicEnviro
                              env1.m3b_unique_species, env2.m3b_unique_species, 
                              d1, d2, hyps[6], hyps[7])
 
-    print('two, three, m2b, m3b', two_term, three_term, many_2_term, many_3_term)
     return two_term + three_term + many_2_term + many_3_term
 
 
