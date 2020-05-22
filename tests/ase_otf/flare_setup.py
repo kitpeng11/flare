@@ -2,7 +2,7 @@ import numpy as np
 
 from flare import otf, kernels
 from flare.gp import GaussianProcess
-from flare.mgp.mgp import MappedGaussianProcess
+from flare.mgp import MappedGaussianProcess
 from flare.ase.calculator import FLARE_Calculator
 import flare.kernels.mc_simple as mc_simple
 
