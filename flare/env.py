@@ -3,14 +3,11 @@ environment of an atom. :class:`AtomicEnvironment` objects are inputs to the
 2-, 3-, and 2+3-body kernels."""
 import numpy as np
 from copy import deepcopy
-from math import sqrt, ceil
-from numba import njit
+from math import ceil
 from flare.struc import Structure
 from flare.parameters import Parameters
-from flare.kernels.kernels import coordination_number, q_value_mc
-import flare.kernels.cutoffs as cf
-from flare.utils.env_getarray import get_2_body_array, get_3_body_array, \
-    get_m2_body_array, get_m3_body_array
+from flare.utils.env_getarray import get_2_body_arrays, get_3_body_arrays, \
+    get_m2_body_arrays, get_m3_body_arrays
 
 
 class AtomicEnvironment:

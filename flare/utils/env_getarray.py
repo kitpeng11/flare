@@ -1,5 +1,8 @@
+from math import sqrt
 from numba import njit
 import numpy as np
+import flare.kernels.cutoffs as cf
+from flare.kernels.kernels import coordination_number, q_value_mc
 
 @njit
 def get_2_body_arrays(positions, atom: int, cell, r_cut, cutoff_2, species, sweep,
