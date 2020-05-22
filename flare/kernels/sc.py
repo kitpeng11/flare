@@ -605,11 +605,20 @@ def many_body(env1, env2, d1, d2, hyps, cutoffs,
     Return:
         float: Value of the many-body force/force kernel.
     """
+    m2b_term = many_2body_jit(env1.m2b_array, env2.m2b_array, 
+                            env1.m2b_grads, env2.m2b_grads,
+                            env1.m2b_neigh_array, env2.m2b_neigh_array, 
+                            env1.m2b_neigh_grads, env2.m2b_neigh_grads,
+                            d1, d2, hyps[0], hyps[1])
 
-    return many_body_jit(env1.q_array, env2.q_array, 
-                         env1.q_neigh_array, env2.q_neigh_array, 
-                         env1.q_neigh_grads, env2.q_neigh_grads,
-                         d1, d2, hyps[0], hyps[1])
+
+    m3b_term = many_3body_jit(env1.m3b_array, env2.m3b_array, 
+                             env1.m3b_grads, env2.m3b_grads,
+                             env1.m3b_neigh_array, env2.m3b_neigh_array, 
+                             env1.m3b_neigh_grads, env2.m3b_neigh_grads,
+                             d1, d2, hyps[2], hyps[3])
+
+    return m2b_term + m3b_term
 
 
 def many_body_grad(env1, env2, d1, d2, hyps, cutoffs,
@@ -632,14 +641,20 @@ def many_body_grad(env1, env2, d1, d2, hyps, cutoffs,
             with respect to the hyperparameters.
     """
 
-    kernel, sig_derv, ls_derv = many_body_grad_jit(env1.q_array, env2.q_array,
-                                       env1.q_neigh_array, env2.q_neigh_array,
-                                       env1.q_neigh_grads, env2.q_neigh_grads,
-                                       d1, d2, hyps[0], hyps[1])
+    m2b_term, sig2_derv, ls2_derv = many_2body_grad_jit(env1.m2b_array, env2.m2b_array, 
+                                 env1.m2b_grads, env2.m2b_grads,
+                                 env1.m2b_neigh_array, env2.m2b_neigh_array, 
+                                 env1.m2b_neigh_grads, env2.m2b_neigh_grads,
+                                 d1, d2, hyps[0], hyps[1])
 
-    kernel_grad = np.array([sig_derv, ls_derv])
+    m3b_term, sig3_derv, ls3_derv = many_3body_grad_jit(env1.m3b_array, env2.m3b_array, 
+                             env1.m3b_grads, env2.m3b_grads,
+                             env1.m3b_neigh_array, env2.m3b_neigh_array, 
+                             env1.m3b_neigh_grads, env2.m3b_neigh_grads,
+                             d1, d2, hyps[2], hyps[3])
 
-    return kernel, kernel_grad
+    return m2b_term + m3b_term, np.hstack([sig2_derv, ls2_derv, sig3_derv, ls3_derv])
+
 
 
 def many_body_force_en(env1, env2, d1, hyps, cutoffs,
@@ -658,9 +673,20 @@ def many_body_force_en(env1, env2, d1, hyps, cutoffs,
         float: Value of the many-body force/energy kernel.
     """
 
-    return many_body_force_en_jit(env1.q_array, env2.q_array, 
-                                  env1.q_neigh_array, env1.q_neigh_grads, 
-                                  d1, hyps[0], hyps[1])
+    # divide by three to account for triple counting
+    m2b_term = many_2body_force_en_jit(env1.m2b_array, env2.m2b_array, 
+                              env1.m2b_grads,
+                              env1.m2b_neigh_array, env1.m2b_neigh_grads,
+                              d1, hyps[0], hyps[1])
+
+    m3b_term = many_3body_force_en_jit(env1.m3b_array, env2.m3b_array, 
+                                      env1.m3b_grads, 
+                                      env1.m3b_neigh_array, 
+                                      env1.m3b_neigh_grads,
+                                      d1, hyps[2], hyps[3])
+
+    return m2b_term + m3b_term
+
 
 
 def many_body_en(env1, env2, hyps, cutoffs,
@@ -679,7 +705,14 @@ def many_body_en(env1, env2, hyps, cutoffs,
         float: Value of the many-body energy/energy kernel.
     """
 
-    return many_body_en_jit(env1.q_array, env2.q_array, hyps[0], hyps[1])
+    m2b_term = many_2body_en_jit(env1.m2b_array, env2.m2b_array, 
+                               hyps[0], hyps[1])
+
+    m3b_term = many_3body_en_jit(env1.m3b_array, env2.m3b_array, 
+                                hyps[2], hyps[3])
+
+    return m2b_term + m3b_term
+
 
 
 # -----------------------------------------------------------------------------
@@ -1276,10 +1309,11 @@ def three_body_en_jit(bond_array_1, bond_array_2,
 # -----------------------------------------------------------------------------
 
 @njit
-def many_body_jit(q_array_1, q_array_2,
-                  q_neigh_array_1, q_neigh_array_2,
-                  q_neigh_grads_1, q_neigh_grads_2,
-                  d1, d2, sig, ls):
+def many_2body_jit(array_1, array_2,
+                   grads_1, grads_2,
+                   neigh_array_1, neigh_array_2,
+                   neigh_grads_1, neigh_grads_2,
+                   d1, d2, sig, ls):
     # TODO: update the docs
     """many-body single-element kernel between two force components accelerated
     with Numba.
@@ -1310,18 +1344,18 @@ def many_body_jit(q_array_1, q_array_2,
     kern = 0
 
     # Calculate many-body descriptor values for 1 and 2
-    q1 = np.sum(q_array_1)
-    q2 = np.sum(q_array_2)
+    q1 = np.sum(array_1)
+    q2 = np.sum(array_2)
     k12 = k_sq_exp_double_dev(q1, q2, sig, ls)
 
-    for i in range(q_neigh_array_1.shape[0]):
-        qi_grad = q_neigh_grads_1[i, d1-1]
-        qis = np.sum(q_neigh_array_1[i, :])
+    for i in range(neigh_array_1.shape[0]):
+        qi_grad = neigh_grads_1[i, d1-1]
+        qis = np.sum(neigh_array_1[i, :])
         ki2s = k_sq_exp_double_dev(qis, q2, sig, ls)
 
-        for j in range(q_neigh_array_2.shape[0]):
-            qj_grad = q_neigh_grads_2[j, d2-1]
-            qjs = np.sum(q_neigh_array_2[j, :])
+        for j in range(neigh_array_2.shape[0]):
+            qj_grad = neigh_grads_2[j, d2-1]
+            qjs = np.sum(neigh_array_2[j, :])
             k1js = k_sq_exp_double_dev(q1, qjs, sig, ls)
 
             kij = k_sq_exp_double_dev(qis, qjs, sig, ls)
@@ -1331,10 +1365,11 @@ def many_body_jit(q_array_1, q_array_2,
     return kern
 
 @njit
-def many_body_grad_jit(q_array_1, q_array_2,
-                       q_neigh_array_1, q_neigh_array_2,
-                       q_neigh_grads_1, q_neigh_grads_2,
-                       d1, d2, sig, ls):
+def many_2body_grad_jit(array_1, array_2,
+                        grads_1, grads_2,
+                        neigh_array_1, neigh_array_2,
+                        neigh_grads_1, neigh_grads_2,
+                        d1, d2, sig, ls):
     # TODO: update the docs
     """gradient of many-body single-element kernel between two force components
     w.r.t. the hyperparameters, accelerated with Numba.
@@ -1368,18 +1403,18 @@ def many_body_grad_jit(q_array_1, q_array_2,
     ls_derv = 0
 
     # Calculate many-body descriptor values for 1 and 2
-    q1 = np.sum(q_array_1)
-    q2 = np.sum(q_array_2)
+    q1 = np.sum(array_1)
+    q2 = np.sum(array_2)
     k12 = k_sq_exp_double_dev(q1, q2, sig, ls)
 
-    for i in range(q_neigh_array_1.shape[0]):
-        qi_grad = q_neigh_grads_1[i, d1-1]
-        qis = np.sum(q_neigh_array_1[i, :])
+    for i in range(neigh_array_1.shape[0]):
+        qi_grad = neigh_grads_1[i, d1-1]
+        qis = np.sum(neigh_array_1[i, :])
         ki2s = k_sq_exp_double_dev(qis, q2, sig, ls)
 
-        for j in range(q_neigh_array_2.shape[0]):
-            qj_grad = q_neigh_grads_2[j, d2-1]
-            qjs = np.sum(q_neigh_array_2[j, :])
+        for j in range(neigh_array_2.shape[0]):
+            qj_grad = neigh_grads_2[j, d2-1]
+            qjs = np.sum(neigh_array_2[j, :])
             k1js = k_sq_exp_double_dev(q1, qjs, sig, ls)
 
             kij = k_sq_exp_double_dev(qis, qjs, sig, ls)
@@ -1394,8 +1429,10 @@ def many_body_grad_jit(q_array_1, q_array_2,
 
 
 @njit
-def many_body_force_en_jit(q_array_1, q_array_2, q_neigh_array_1,
-                           q_neigh_grads, d1, sig, ls):
+def many_2body_force_en_jit(array_1, array_2, 
+                            grads_1,
+                            neigh_array_1,
+                            neigh_grads, d1, sig, ls):
     """many-body single-element kernel between force and energy components accelerated
     with Numba.
 
@@ -1418,23 +1455,24 @@ def many_body_force_en_jit(q_array_1, q_array_2, q_neigh_array_1,
         float: Value of the many-body kernel.
     """
 
-    q1 = np.sum(q_array_1)
-    q2 = np.sum(q_array_2)
+    kern = 0
+    q1 = np.sum(array_1)
+    q2 = np.sum(array_2)
     k12 = k_sq_exp_dev(q1, q2, sig, ls)
+    kern -= k12 * np.sum(grads_1[:, d1-1])
 
     # Loop over neighbours i of 1
-    kern = 0
-    for i in range(q_neigh_array_1.shape[0]):
-        qi1_grad = q_neigh_grads[i, d1-1]
-        qis = np.sum(q_neigh_array_1[i, :])
+    for i in range(neigh_array_1.shape[0]):
+        qi1_grad = neigh_grads[i, d1-1]
+        qis = np.sum(neigh_array_1[i, :])
         ki2s = k_sq_exp_dev(qis, q2, sig, ls)
-        kern += - qi1_grad * (k12 + ki2s)
+        kern -= qi1_grad * ki2s
 
     return kern
 
 
 @njit
-def many_body_en_jit(q_array_1, q_array_2, sig, ls):
+def many_2body_en_jit(array_1, array_2, sig, ls):
     """many-body single-element energy kernel between accelerated
     with Numba.
 
@@ -1449,11 +1487,189 @@ def many_body_en_jit(q_array_1, q_array_2, sig, ls):
     Return:
         float: Value of the many-body kernel.
     """
-    q1 = np.sum(q_array_1) # use sum to be compatible with mc
-    q2 = np.sum(q_array_2)
+    q1 = np.sum(array_1) # use sum to be compatible with mc
+    q2 = np.sum(array_2)
     q1q2diff = q1 - q2 
     kern = sig * sig * exp(-q1q2diff * q1q2diff / (2 * ls * ls))
     return kern
+
+@njit
+def many_3body_jit(array_1, array_2, 
+                   grads_1, grads_2,
+                   neigh_array_1, neigh_array_2,
+                   neigh_grads_1, neigh_grads_2,
+                   d1, d2, sig, ls):
+    """
+    Args:
+        To be filled.
+    Return:
+        float: Value of the many-body kernel.
+    """
+
+    kern = 0
+
+    # contribution of env1's center & env2's center
+    q1 = np.sum(array_1)
+    q2 = np.sum(array_2)
+    k12 = k_sq_exp_double_dev(q1, q2, sig, ls)
+    qni_grad = np.sum(grads_1[:, :, d1-1])
+    qmj_grad = np.sum(grads_2[:, :, d2-1])
+    kern += k12 * qni_grad * qmj_grad
+
+    # contribution of env1's neighbors & env2's center
+    for n in range(neigh_array_1.shape[0]):
+        qn1s = np.sum(neigh_array_1[n, :, :])
+        q21s = q2
+        kn2 = k_sq_exp_double_dev(qn1s, q21s, sig, ls)
+    
+        qn1s_grad = np.sum(neigh_grads_1[n, :, d1-1])
+        q21s_grad = qmj_grad
+        
+        kern += kn2 * qn1s_grad * q21s_grad
+
+    # contribution of env1's center & env2's neighbors
+    for m in range(neigh_array_2.shape[0]):
+        qm2s = np.sum(neigh_array_2[m, :, :])
+        q12s = q1
+        km1 = k_sq_exp_double_dev(qm2s, q12s, sig, ls)
+
+        qm2s_grad = np.sum(neigh_grads_2[m, :, d2-1])
+        q12s_grad = qni_grad
+
+        kern += km1 * qm2s_grad * q12s_grad
+
+    # contribution of env1's neighbors & env2's neighbors
+    for n in range(neigh_array_1.shape[0]): 
+        for m in range(neigh_array_2.shape[0]): 
+            qn1s = np.sum(neigh_array_1[n, :, :])
+            qm2s = np.sum(neigh_array_2[m, :, :])
+            kmn = k_sq_exp_double_dev(qn1s, qm2s, sig, ls)
+
+            qn1s_grad = np.sum(neigh_grads_1[n, :, d1-1])
+            qm2s_grad = np.sum(neigh_grads_2[m, :, d2-1]) 
+
+            kern += kmn * qn1s_grad * qm2s_grad
+
+    return kern
+
+
+@njit
+def many_3body_grad_jit(array_1, array_2, 
+                        grads_1, grads_2,
+                        neigh_array_1, neigh_array_2,
+                        neigh_grads_1, neigh_grads_2,
+                        d1, d2, sig, ls):
+    """
+    Args:
+        To be filled.
+    Return:
+        float: Value of the many-body kernel.
+    """
+
+    kern = 0
+    ls_derv = 0
+
+    # contribution of env1's center & env2's center
+    q1 = np.sum(array_1)
+    q2 = np.sum(array_2)
+
+    k12 = k_sq_exp_double_dev(q1, q2, sig, ls)
+    q12diffsq = (q1 - q2) ** 2
+    dk12 = mb_grad_helper_ls_(q12diffsq, sig, ls)
+
+    qni_grad = np.sum(grads_1[:, :, d1-1])
+    qmj_grad = np.sum(grads_2[:, :, d2-1])
+
+    kern += k12 * qni_grad * qmj_grad
+    ls_derv += dk12 * qni_grad * qmj_grad
+
+    # contribution of env1's neighbors & env2's center
+    for n in range(neigh_array_1.shape[0]):
+        qn1s = np.sum(neigh_array_1[n, :, :])
+        q21s = q2
+        kn2 = k_sq_exp_double_dev(qn1s, q21s, sig, ls)
+        qn2diffsq = (qn1s - q21s) ** 2
+        dkn2 = mb_grad_helper_ls_(qn2diffsq, sig, ls)
+    
+        qn1s_grad = np.sum(neigh_grads_1[n, :, d1-1])
+        q21s_grad = qmj_grad
+        
+        kern += kn2 * qn1s_grad * q21s_grad
+        ls_derv += dkn2 * qn1s_grad * q21s_grad
+
+    # contribution of env1's center & env2's neighbors
+    for m in range(neigh_array_2.shape[0]):
+        qm2s = np.sum(neigh_array_2[m, :, :])
+        q12s = q1
+        km1 = k_sq_exp_double_dev(qm2s, q12s, sig, ls)
+        q1mdiffsq = (q12s - qm2s) ** 2
+        dkm1 = mb_grad_helper_ls_(q1mdiffsq, sig, ls)
+
+        qm2s_grad = np.sum(neigh_grads_2[m, :, d2-1])
+        q12s_grad = qni_grad
+
+        kern += km1 * qm2s_grad * q12s_grad
+        ls_derv += dkm1 * qm2s_grad * q12s_grad
+
+    # contribution of env1's neighbors & env2's neighbors
+    for n in range(neigh_array_1.shape[0]): 
+        for m in range(neigh_array_2.shape[0]): 
+            qn1s = np.sum(neigh_array_1[n, :, :])
+            qm2s = np.sum(neigh_array_2[m, :, :])
+            kmn = k_sq_exp_double_dev(qn1s, qm2s, sig, ls)
+            qnmdiffsq = (qn1s - qm2s) ** 2
+            dkmn = mb_grad_helper_ls_(qnmdiffsq, sig, ls)
+
+            qn1s_grad = np.sum(neigh_grads_1[n, :, d1-1])
+            qm2s_grad = np.sum(neigh_grads_2[m, :, d2-1]) 
+
+            kern += kmn * qn1s_grad * qm2s_grad
+            ls_derv += dkmn * qn1s_grad * qm2s_grad
+
+    sig_derv = 2. / sig * kern
+    return kern, sig_derv, ls_derv
+
+
+
+
+@njit
+def many_3body_force_en_jit(array_1, array_2, 
+                            grads_1,
+                            neigh_array_1, neigh_grads_1,
+                            d1, sig, ls):
+
+    kern = 0
+    q1 = np.sum(array_1)
+    q2 = np.sum(array_2)
+    k12 = k_sq_exp_dev(q1, q2, sig, ls) 
+    kern -= k12 * np.sum(grads_1[:, :, d1-1]) 
+
+    for n in range(neigh_array_1.shape[0]):
+        qn = np.sum(neigh_array_1[n, :, :])
+        kn2 = k_sq_exp_dev(qn, q2, sig, ls) 
+        q_grads = np.sum(neigh_grads_1[n, :, d1-1])
+        kern -= kn2 * q_grads
+
+    return kern
+
+@njit
+def many_3body_en_jit(m3b_array_1, m3b_array_2, sig, ls):
+    """many-body many-element kernel between energy components accelerated
+    with Numba.
+
+    Args:
+        To be filled.
+
+    Return:
+        float: Value of the many-body kernel.
+    """
+    q1 = np.sum(m3b_array_1)
+    q2 = np.sum(m3b_array_2)
+    q1q2diff = q1 - q2
+    kern = sig * sig * exp(-q1q2diff * q1q2diff / (2 * ls * ls))
+    return kern
+
+
 
 # -----------------------------------------------------------------------------
 #                        three body helper functions
