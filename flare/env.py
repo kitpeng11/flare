@@ -121,7 +121,7 @@ class AtomicEnvironment:
 
         assert self.threebody_cutoff <= self.twobody_cutoff, \
             "2b cutoff has to be larger than 3b cutoff"
-        # # TO DO, once the mb function is updated to use the bond_array_2
+        # # TODO, once the mb function is updated to use the bond_array_2
         # # this block should be activated.
         # assert self.manybody_cutoff <= self.twobody_cutoff, \
         #         "mb cutoff has to be larger than mb cutoff"
@@ -200,7 +200,7 @@ class AtomicEnvironment:
 
             self.m3b_array, self.m3b_neigh_array, self.m3b_grads, self.m3b_neigh_grads,\
                 self.m3b_unique_species, self.etypes_m3b = get_m3_body_arrays(\
-                self.positions, self.atom, self.cell, self.scalar_cutoff_m3b, \
+                self.positions, self.atom, self.cell, self.manybody_cutoff, \
                 self.species, self.sweep_array, cf.quadratic_cutoff)
 
 

@@ -337,16 +337,17 @@ def get_m3_body_arrays(positions, atom: int, cell, cutoff: float, species,
     q_func = coordination_number
 
     bond_array, bond_positions, etypes, bond_inds = \
-        get_2_body_arrays(positions, atom, cell, cutoff, species, sweep)
+        get_2_body_arrays(positions, atom, cell, cutoff, None, species, sweep,\
+        1, None, None)
 
     bond_array_m3b, cross_bond_inds, cross_bond_dists, triplets = \
-        get_3_body_arrays(bond_array, bond_positions, cutoff)
+        get_3_body_arrays(bond_array, bond_positions, species[atom], etypes, \
+        cutoff, None, 1, None, None)
 
     # get descriptor of center atom for each species
     m3b_array = q3_value_mc(bond_array_m3b[:, 0], cross_bond_inds, 
         cross_bond_dists, triplets, cutoff, species_list, etypes, 
         cutoff_func, q_func)
-
 
     # get descriptor of all neighbor atoms for each species
     n_bonds = len(bond_array_m3b)
@@ -354,10 +355,12 @@ def get_m3_body_arrays(positions, atom: int, cell, cutoff: float, species,
     m3b_neigh_array = np.zeros((n_bonds, n_specs, n_specs))
     for i in range(n_bonds):
         neigh_bond_array, neigh_positions, neigh_etypes, _ = \
-            get_2_body_arrays(positions, bond_inds[i], cell, cutoff, species, sweep)
+            get_2_body_arrays(positions, bond_inds[i], cell, cutoff, None, \
+            species, sweep, 1, None, None)
 
         neigh_array_m3b, neigh_cross_inds, neigh_cross_dists, neigh_triplets = \
-            get_3_body_arrays(neigh_bond_array, neigh_positions, cutoff)
+            get_3_body_arrays(neigh_bond_array, neigh_positions, etypes[i], \
+            neigh_etypes, cutoff, None, 1, None, None)
 
         m3b_neigh_array[i, :, :] = q3_value_mc(neigh_array_m3b[:, 0],
             neigh_cross_inds, neigh_cross_dists, neigh_triplets, 
