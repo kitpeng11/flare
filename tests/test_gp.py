@@ -29,9 +29,7 @@ def all_gps() -> GaussianProcess:
     gp_dict = {True: None, False: None}
     for multihyps in multihyps_list:
         hyps, hm, cutoffs = generate_hm(1, 1, multihyps=multihyps)
-        hl = hm['hyps_label']
-        if (multihyps is False):
-            hm = None
+        hl = hm['hyp_labels']
 
         # test update_db
         gpname = '2+3+mb_mc'
@@ -41,7 +39,7 @@ def all_gps() -> GaussianProcess:
                             hyps=hyps,
                             hyp_labels=hl,
                             cutoffs=cutoffs,
-                            multihyps=multihyps, hyps_mask=hm,
+                            hyps_mask=hm,
                             parallel=False, n_cpus=1)
 
         test_structure, forces = \
@@ -111,13 +109,14 @@ class TestTraining():
 
         # train gp
         test_gp.hyps = np.ones(len(test_gp.hyps))
-        hyp = list(test_gp.hyps)
+        hyps = tuple(test_gp.hyps)
+
         test_gp.train()
 
-        hyp_post = list(test_gp.hyps)
+        hyp_post = tuple(test_gp.hyps)
 
         # check if hyperparams have been updated
-        assert (hyp != hyp_post)
+        assert (hyps != hyp_post)
 
     def test_train_failure(self, all_gps, params, mocker):
         """
@@ -171,8 +170,12 @@ class TestConstraint():
         hyps, hm, cutoffs = generate_hm(1, 1, constraint=True, multihyps=True)
 
         test_gp.hyps_mask = hm
-        test_gp.hyp_labels = hm['hyps_label']
+        test_gp.hyp_labels = hm['hyp_labels']
         test_gp.hyps = hyps
+        test_gp.update_kernel(hm['kernel_name'], hm)
+        test_gp.set_L_alpha()
+
+        hyp = list(test_gp.hyps)
 
         # Check that the hyperparameters were updated
         test_gp.maxiter = 1
@@ -218,7 +221,7 @@ class TestAlgebra():
 
         test_structure, forces = \
             get_random_structure(params['cell'], params['unique_species'], 2)
-        energy = 3.14                 
+        energy = 3.14
         test_gp.check_L_alpha()
         test_gp.update_db(test_structure, forces, energy=energy)
         test_gp.update_L_alpha()
@@ -241,12 +244,14 @@ class TestIO():
             assert 'Kernel: two_three_many_body_mc' in the_str
         else:
             assert 'Kernel: two_plus_three_plus_many_body_mc' in the_str
-        assert 'Cutoffs: [0.8 0.8 0.8]' in the_str
+        assert 'cutoff_twobody: 0.8' in the_str
+        assert 'cutoff_threebody: 0.8' in the_str
+        assert 'cutoff_manybody: 0.8' in the_str
         assert 'Model Likelihood: ' in the_str
         if not multihyps:
-            assert 'Length: ' in the_str
-            assert 'Signal Var.: ' in the_str
-            assert "Noise Var.: " in the_str
+            assert 'Length ' in the_str
+            assert 'Signal Var. ' in the_str
+            assert "Noise Var." in the_str
 
     @pytest.mark.parametrize('multihyps', multihyps_list)
     def test_serialization_method(self, all_gps, validation_env, multihyps):
@@ -281,7 +286,11 @@ class TestIO():
         for d in [1, 2, 3]:
             assert np.all(test_gp.predict(x_t=validation_env, d=d) ==
                           new_gp.predict(x_t=validation_env, d=d))
-        os.remove('test_gp_write.pickle')
+
+        try:
+            os.remove('test_gp_write.pickle')
+        except:
+            pass
 
         test_gp.write_model('test_gp_write', 'json')
 
@@ -296,6 +305,31 @@ class TestIO():
             test_gp.write_model('test_gp_write', 'cucumber')
 
 
+    def test_load_reload_huge(self, all_gps):
+        """
+        Unit tests that loading and reloading a huge GP works.
+        :param all_gps:
+        :return:
+        """
+        test_gp = deepcopy(all_gps[False])
+        test_gp.set_L_alpha()
+        dummy_gp = deepcopy(test_gp)
+        dummy_gp.training_data = [1]*5001
+
+        prev_ky_mat = deepcopy(dummy_gp.ky_mat)
+        prev_l_mat = deepcopy(dummy_gp.l_mat)
+
+        dummy_gp.training_data = [1]*5001
+        test_gp.write_model('test_gp_write', 'json')
+        new_gp = GaussianProcess.from_file('test_gp_write.json')
+        assert np.array_equal(prev_ky_mat, new_gp.ky_mat)
+        assert np.array_equal(prev_l_mat, new_gp.l_mat)
+
+        os.remove('test_gp_write.json')
+
+
+
+
 def dumpcompare(obj1, obj2):
     '''this source code comes from
     http://stackoverflow.com/questions/15785719/how-to-print-a-dictionary-line-by-line-in-python'''
@@ -308,8 +342,6 @@ def dumpcompare(obj1, obj2):
         for k1, k2 in zip(sorted(obj1.keys()), sorted(obj2.keys())):
 
             assert k1 == k2, f"key {k1} is not the same as {k2}"
-
-            print(k1)
 
             if (k1 != "name"):
                 if (obj1[k1] is None):
@@ -376,11 +408,15 @@ class TestHelper():
         # testing on the predictions made, just that the cutoffs in the
         # atomic environments are correctly re-created
 
-        old_cutoffs = np.copy(test_gp.cutoffs)
+        old_cutoffs = {}
+        new_cutoffs = {}
+        for k in test_gp.cutoffs:
+            old_cutoffs[k] = test_gp.cutoffs[k]
+            new_cutoffs[k] = 0.5+old_cutoffs[k]
+        test_gp.hyps_mask['cutoffs']=new_cutoffs
+        test_gp.adjust_cutoffs(new_cutoffs, train=False, new_hyps_mask=test_gp.hyps_mask)
 
-        test_gp.adjust_cutoffs(np.array(test_gp.cutoffs) + .5, train=False)
-
-        assert np.array_equal(test_gp.cutoffs, old_cutoffs + .5)
+        assert np.array_equal(list(test_gp.cutoffs.values()), np.array(list(old_cutoffs.values()), dtype=float) + .5)
 
         for env in test_gp.training_data:
-            assert np.array_equal(env.cutoffs, test_gp.cutoffs)
+            assert env.cutoffs == test_gp.cutoffs

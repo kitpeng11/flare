@@ -96,8 +96,8 @@ def test_init(bodies, multihyps, all_mgp, all_gp):
     grid_num_2 = 64
     grid_num_3 = 16
     lower_cut = 0.01
-    two_cut = gp_model.cutoffs[0]
-    three_cut = gp_model.cutoffs[1]
+    two_cut = gp_model.cutoffs.get('twobody', 0)
+    three_cut = gp_model.cutoffs.get('threebody', 0)
     lammps_location = f'{bodies}{multihyps}.mgp'
 
     # set struc params. cell and masses arbitrary?
@@ -144,6 +144,9 @@ def test_build_map(all_gp, all_mgp, all_ase_calc, bodies, multihyps):
     gp_model = all_gp[f'{bodies}{multihyps}']
     mgp_model = all_mgp[f'{bodies}{multihyps}']
 
+    print("hello1", gp_model.hyps_mask)
+    print("hello2", mgp_model.hyps_mask)
+
     mgp_model.build_map(gp_model)
 
     all_ase_calc[f'{bodies}{multihyps}'] = FLARE_Calculator(gp_model,
@@ -174,7 +177,7 @@ def test_lmp_calc(bodies, multihyps, all_lmp_calc):
 
 
     # create ASE calc
-    lmp_calc = LAMMPS(label=f'tmp{label}', keep_tmp_files=True, tmp_dir='./tmp/', 
+    lmp_calc = LAMMPS(label=f'tmp{label}', keep_tmp_files=True, tmp_dir='./tmp/',
             parameters=parameters, files=files)
 
     all_lmp_calc[label] = lmp_calc

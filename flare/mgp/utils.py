@@ -10,18 +10,19 @@ from flare.kernels.cutoffs import quadratic_cutoff
 from flare.kernels.kernels import three_body_helper_1, \
     three_body_helper_2, force_helper
 from flare.kernels.utils import str_to_kernel_set as stks
-from flare.utils.mask_helper import HyperParameterMasking
+from flare.parameters import Parameters
 
 
 def get_2bkernel(GP):
     if 'mc' in GP.kernel_name:
-        kernel, _, ek, efk = stks('2', GP.multihyps)
+        kernel, _, ek, efk = stks('2', GP.hyps_mask)
     else:
-        kernel, _, ek, efk = stks('2sc', GP.multihyps)
+        kernel, _, ek, efk = stks('2sc', GP.hyps_mask)
 
-    cutoffs = [GP.cutoffs[0]]
 
-    hyps, hyps_mask = HyperParameterMasking.get_2b_hyps(GP.hyps, GP.hyps_mask, GP.multihyps)
+    hyps_mask = Parameters.get_component_mask(GP.hyps_mask, 'twobody', hyps=GP.hyps)
+    hyps = hyps_mask['hyps']
+    cutoffs = hyps_mask['cutoffs']
 
     return (kernel, ek, efk, cutoffs, hyps, hyps_mask)
 
@@ -29,20 +30,18 @@ def get_2bkernel(GP):
 def get_3bkernel(GP):
 
     if 'mc' in GP.kernel_name:
-        kernel, _, ek, efk = stks('3', GP.multihyps)
+        kernel, _, ek, efk = stks('3', GP.hyps_mask)
     else:
-        kernel, _, ek, efk = stks('3sc', GP.multihyps)
+        kernel, _, ek, efk = stks('3sc', GP.hyps_mask)
 
     base = 0
     for t in ['two', '2']:
         if t in GP.kernel_name:
             base = 2
 
-    cutoffs = np.copy(GP.cutoffs)
-
-    hyps, hyps_mask = \
-            HyperParameterMasking.get_3b_hyps(\
-                GP.hyps, GP.hyps_mask, GP.multihyps)
+    hyps_mask = Parameters.get_component_mask(GP.hyps_mask, 'threebody', hyps=GP.hyps)
+    hyps = hyps_mask['hyps']
+    cutoffs = hyps_mask['cutoffs']
 
     return (kernel, ek, efk, cutoffs, hyps, hyps_mask)
 

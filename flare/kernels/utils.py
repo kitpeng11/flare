@@ -1,7 +1,9 @@
 import numpy as np
 
-from flare.kernels import sc, mc_simple, mc_sephyps
 import flare.kernels.map_3b_kernel as map_3b
+
+from flare.kernels import sc, mc_simple, mc_sephyps
+from flare.parameters import Parameters
 
 """
 This module includes interface functions between kernels and gp/gp_algebra
@@ -17,7 +19,7 @@ from_grad_to_mask(grad, hyps_mask) converts the gradient matrix to the actual
 """
 
 
-def str_to_kernel_set(name: str, multihyps: bool = False):
+def str_to_kernel_set(name: str, hyps_mask: dict = None):
     """
     return kernels and kernel gradient function base on a string.
     If it contains 'sc', it will use the kernel in sc module;
@@ -36,13 +38,19 @@ def str_to_kernel_set(name: str, multihyps: bool = False):
 
     """
 
+    #  kernel name should be replace with kernel array
+
     if 'sc' in name:
         stk = sc._str_to_kernel
     else:
-        if (multihyps is False):
+        if hyps_mask is None:
             stk = mc_simple._str_to_kernel
         else:
-            stk = mc_sephyps._str_to_kernel
+            # In the future, this should be nbond >1, use sephyps bond...
+            if hyps_mask['nspecie'] > 1:
+                stk = mc_sephyps._str_to_kernel
+            else:
+                stk = mc_simple._str_to_kernel
 
     # b2 = Two body in use, b3 = Three body in use
     b2 = False
@@ -50,20 +58,20 @@ def str_to_kernel_set(name: str, multihyps: bool = False):
     many = False
 
     for s in ['2', 'two', 'Two', 'TWO']:
-        if (s in name):
+        if s in name:
             b2 = True
     for s in ['3', 'three', 'Three', 'THREE']:
-        if (s in name):
+        if s in name:
             b3 = True
     for s in ['mb', 'manybody', 'many', 'Many', 'ManyBody']:
-        if (s in name):
+        if s in name:
             many = True
 
     prefix = ''
     str_term = {'2': b2, '3': b3, 'many': many}
     for term in str_term:
         if str_term[term]:
-            if (len(prefix) > 0):
+            if len(prefix) > 0:
                 prefix += '+'
             prefix += term
     if len(prefix) == 0:
@@ -78,7 +86,8 @@ def str_to_kernel_set(name: str, multihyps: bool = False):
     return stk[prefix], stk[prefix+'_grad'], stk[prefix+'_en'], \
         stk[prefix+'_force_en']
 
-def str_to_mapped_kernel(name: str, multihyps: bool = False, energy=False):
+
+def str_to_mapped_kernel(name: str, hyps_mask: dict = None, energy=False):
     """
     return kernels and kernel gradient function base on a string.
     If it contains 'sc', it will use the kernel in sc module;
@@ -99,29 +108,37 @@ def str_to_mapped_kernel(name: str, multihyps: bool = False, energy=False):
     """
 
     if 'sc' in name:
-        raise NotImplementedError("mapped kernel for single component "\
-                "is not implemented")
+        raise NotImplementedError("mapped kernel for single component "
+                                  "is not implemented")
+
+    if hyps_mask is None:
+        multihyps = False
+    # In the future, this should be ntwobody >1, use sephyps bond...
+    elif hyps_mask['nspecie'] == 1:
+        multihyps = False
+    else:
+        multihyps = True
 
     # b2 = Two body in use, b3 = Three body in use
     b2 = False
     many = False
     b3 = False
     for s in ['3', 'three', 'Three', 'THREE']:
-        if (s in name):
+        if s in name:
             b3 = True
 
-    if (b3 == True and energy == False):
-        if (multihyps is True):
+    if b3 == True and energy == False:
+        if multihyps:
             tbmfe = map_3b.three_body_mc_en_force_sephyps
             tbme = map_3b.three_body_mc_en_sephyps
         else:
             tbmfe = map_3b.three_body_mc_en_force
             tbme = map_3b.three_body_mc_en
     else:
-        raise NotImplementedError("mapped kernel for two-body and manybody kernels "\
-                "are not implemented")
+        raise NotImplementedError("mapped kernel for two-body and manybody kernels "
+                                  "are not implemented")
 
-    return tbmfe, tbme
+    return tbme, tbmfe
 
 
 def from_mask_to_args(hyps, hyps_mask: dict, cutoffs):
@@ -138,113 +155,64 @@ def from_mask_to_args(hyps, hyps_mask: dict, cutoffs):
     :return: args
     """
 
+    cutoffs_array = [0, 0, 0]
+    cutoffs_array[0] = cutoffs.get('twobody', 0)
+    cutoffs_array[1] = cutoffs.get('threebody', 0)
+    cutoffs_array[2] = cutoffs.get('manybody', 0)
+
     # no special setting
     if (hyps_mask is None):
-        return (hyps, cutoffs)
-
-    if ('map' in hyps_mask):
-        orig_hyps = hyps_mask['original']
-        hm = hyps_mask['map']
-        for i, h in enumerate(hyps):
-            orig_hyps[hm[i]] = h
-    else:
-        orig_hyps = hyps
+        return (hyps, cutoffs_array)
+    if hyps_mask['nspecie'] == 1 :
+        return (hyps, cutoffs_array)
 
     # setting for mc_sephyps
-    n2b = hyps_mask.get('nbond', 0)
-    n3b = hyps_mask.get('ntriplet', 0)
-    nmb = hyps_mask.get('nmb', 0)
+    nspecie = hyps_mask['nspecie']
+    n2b = hyps_mask.get('ntwobody', 0)
+
+    n3b = hyps_mask.get('nthreebody', 0)
+    nmanybody = hyps_mask.get('nmanybody', 0)
     ncut3b = hyps_mask.get('ncut3b', 0)
 
-    bond_mask = hyps_mask.get('bond_mask', None)
-    triplet_mask = hyps_mask.get('triplet_mask', None)
-    mb_mask = hyps_mask.get('mb_mask', None)
+    twobody_mask = hyps_mask.get('twobody_mask', None)
+    threebody_mask = hyps_mask.get('threebody_mask', None)
+    manybody_mask = hyps_mask.get('manybody_mask', None)
     cut3b_mask = hyps_mask.get('cut3b_mask', None)
 
-    ncutoff = len(cutoffs)
-    if (ncutoff > 2):
-        if (cutoffs[2] == 0):
-            ncutoff = 2
+    # TO DO , should instead use the non-sephyps kernel
+    if (n2b == 1):
+        twobody_mask = np.zeros(nspecie**2, dtype=int)
+    if (n3b == 1):
+        threebody_mask = np.zeros(nspecie**3, dtype=int)
+    if (nmanybody == 1):
+        manybody_mask = np.zeros(nspecie**2, dtype=int)
 
-    if (ncutoff > 0):
-        cutoff_2b = [cutoffs[0]]
-        if ('cutoff_2b' in hyps_mask):
-            cutoff_2b = hyps_mask['cutoff_2b']
-        elif (n2b > 0):
-            cutoff_2b = np.ones(n2b)*cutoffs[0]
+    cutoff_2b = cutoffs.get('twobody', 0)
+    cutoff_3b = cutoffs.get('threebody', 0)
+    cutoff_mb = cutoffs.get('manybody', 0)
 
-    cutoff_3b = None
-    if (ncutoff > 1):
-        cutoff_3b = cutoffs[1]
-        if ('cutoff_3b' in hyps_mask):
-            cutoff_3b = hyps_mask['cutoff_3b']
-            if (ncut3b == 1):
-                cutoff_3b = cutoff_3b[0]
-                ncut3b = 0
-                cut3b_mask = None
-
-    cutoff_mb = None
-    if (ncutoff > 2):
-        cutoff_mb = np.array([cutoffs[2]])
-        if ('cutoff_mb' in hyps_mask):
-            cutoff_mb = hyps_mask['cutoff_mb']
-        elif (nmb > 0):
-            cutoff_mb = np.ones(nmb)*cutoffs[2]
-        # if the user forget to define nmb
-        # there has to be a mask, because this is the
-        # multi hyper parameter mode
-        if (nmb == 0 and len(orig_hyps)>(n2b*2+n3b*2+1)):
-            nmb = 1
-            nspecie = hyps_mask['nspecie']
-            mb_mask = np.zeros(nspecie*nspecie, dtype=int)
-
-    sig2 = None
-    ls2 = None
-    sig3 = None
-    ls3 = None
-    sigm = None
-    lsm = None
-
-    if (ncutoff <= 2):
-        if (n2b != 0):
-            sig2 = np.array(orig_hyps[:n2b])
-            ls2 = np.array(orig_hyps[n2b:n2b * 2])
-        if (n3b != 0):
-            sig3 = np.array(orig_hyps[n2b * 2:n2b * 2 + n3b])
-            ls3 = np.array(orig_hyps[n2b * 2 + n3b:n2b * 2 + n3b * 2])
-        if (n2b == 0) and (n3b == 0):
-            raise NameError("Hyperparameter mask missing nbond and/or "
-                            "ntriplet key")
-        return (cutoff_2b, cutoff_3b,
-                hyps_mask['nspecie'], hyps_mask['specie_mask'],
-                n2b, bond_mask, n3b, triplet_mask,
-                ncut3b, cut3b_mask,
-                sig2, ls2, sig3, ls3)
-
-    elif (ncutoff == 3):
-
-        if (n2b != 0):
-            sig2 = np.array(orig_hyps[:n2b])
-            ls2 = np.array(orig_hyps[n2b:n2b * 2])
-        if (n3b != 0):
-            start = n2b*2
-            sig3 = np.array(orig_hyps[start:start + n3b])
-            ls3 = np.array(orig_hyps[start + n3b:start + n3b * 2])
-        if (nmb != 0):
-            start = n2b*2 + n3b*2
-            sigm = np.array(orig_hyps[start: start+nmb])
-            lsm = np.array(orig_hyps[start+nmb: start+nmb*2])
-
-        return (cutoff_2b, cutoff_3b, cutoff_mb,
-                hyps_mask['nspecie'],
-                np.array(hyps_mask['specie_mask']),
-                n2b, bond_mask,
-                n3b, triplet_mask,
-                ncut3b, cut3b_mask,
-                nmb, mb_mask,
-                sig2, ls2, sig3, ls3, sigm, lsm)
+    if 'bond_cutoff_list' in hyps_mask:
+        cutoff_2b = hyps_mask['bond_cutoff_list']
     else:
-        raise RuntimeError("only support up to 3 cutoffs")
+        cutoff_2b = np.ones(nspecie**2, dtype=float)*cutoff_2b
+
+    if 'threebody_cutoff_list' in hyps_mask:
+        cutoff_3b = hyps_mask['threebody_cutoff_list']
+    if 'manybody_cutoff_list' in hyps_mask:
+        cutoff_mb = hyps_mask['manybody_cutoff_list']
+
+    (sig2, ls2) = Parameters.get_component_hyps(hyps_mask, 'twobody', hyps=hyps)
+    (sig3, ls3) = Parameters.get_component_hyps(hyps_mask, 'threebody', hyps=hyps)
+    (sigm, lsm) = Parameters.get_component_hyps(hyps_mask, 'manybody', hyps=hyps)
+
+    return (cutoff_2b, cutoff_3b, cutoff_mb,
+            nspecie,
+            np.array(hyps_mask['specie_mask']),
+            n2b, twobody_mask,
+            n3b, threebody_mask,
+            ncut3b, cut3b_mask,
+            nmanybody, manybody_mask,
+            sig2, ls2, sig3, ls3, sigm, lsm)
 
 
 def from_grad_to_mask(grad, hyps_mask):
@@ -259,7 +227,7 @@ def from_grad_to_mask(grad, hyps_mask):
     """
 
     # no special setting
-    if (hyps_mask is None):
+    if hyps_mask is None:
         return grad
 
     # setting for mc_sephyps
@@ -269,7 +237,7 @@ def from_grad_to_mask(grad, hyps_mask):
 
     # setting for mc_sephyps
     # if the last element is not sigma_noise
-    if (hyps_mask['map'][-1] == len(grad)):
+    if hyps_mask['map'][-1] == len(grad):
         hm = hyps_mask['map'][:-1]
     else:
         hm = hyps_mask['map']

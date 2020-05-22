@@ -10,6 +10,7 @@ import numpy as np
 import multiprocessing as mp
 
 from copy import deepcopy
+from math import ceil, floor
 from scipy.linalg import solve_triangular
 from typing import List
 
@@ -17,11 +18,13 @@ from flare.struc import Structure
 from flare.env import AtomicEnvironment
 from flare.gp import GaussianProcess
 from flare.gp_algebra import partition_vector, energy_force_vector_unit, \
-    force_energy_vector_unit, energy_energy_vector_unit, force_force_vector_unit
+    force_energy_vector_unit, energy_energy_vector_unit, force_force_vector_unit, \
+    _global_training_data, _global_training_structures, \
+    get_kernel_vector, en_kern_vec
+from flare.parameters import Parameters
 from flare.kernels.utils import from_mask_to_args, str_to_kernel_set, str_to_mapped_kernel
 from flare.kernels.cutoffs import quadratic_cutoff
 from flare.utils.element_coder import Z_to_element, NumpyEncoder
-from flare.utils.mask_helper import HyperParameterMasking as hpm
 
 
 from flare.mgp.utils import get_bonds, get_triplets, get_triplets_en, \
@@ -115,8 +118,8 @@ class MappedGaussianProcess:
         # if GP exists, the GP setup overrides the grid_params setup
         if GP is not None:
 
-            self.cutoffs = GP.cutoffs
-            self.hyps_mask = GP.hyps_mask
+            self.cutoffs = deepcopy(GP.cutoffs)
+            self.hyps_mask = deepcopy(GP.hyps_mask)
 
             self.bodies = []
             if "two" in GP.kernel_name:
@@ -142,15 +145,24 @@ class MappedGaussianProcess:
         '''
 
         if (GP is not None):
-            self.cutoffs = GP.cutoffs
-            self.hyps_mask = GP.hyps_mask
+            self.cutoffs = deepcopy(GP.cutoffs)
+            self.hyps_mask = deepcopy(GP.hyps_mask)
+            if 2 in self.bodies and \
+                    'twobody' not in self.hyps_mask['kernels']:
+                self.bodies.remove(2)
+            if 3 in self.bodies and \
+                    'threebody' not in self.hyps_mask['kernels']:
+                self.bodies.remove(3)
 
+        self.maps_2 = []
+        self.maps_3 = []
 
         if 2 in self.bodies:
             for b_struc in self.bond_struc[0]:
                 if (GP is not None):
-                    self.bounds_2[1][0] = hpm.get_cutoff(b_struc.coded_species,
-                            self.cutoffs, self.hyps_mask)
+                    self.bounds_2[1][0] = Parameters.get_cutoff('twobody',
+                                                         b_struc.coded_species,
+                                                         self.hyps_mask)
                 map_2 = Map2body(self.grid_num_2, self.bounds_2,
                                  b_struc, self.map_force, self.svd_rank_2,
                                  self.mean_only, self.n_cpus, self.n_sample)
@@ -158,8 +170,11 @@ class MappedGaussianProcess:
         if 3 in self.bodies:
             for b_struc in self.bond_struc[1]:
                 if (GP is not None):
-                    self.bounds_3[1] = hpm.get_cutoff(b_struc.coded_species,
-                            self.cutoffs, self.hyps_mask)
+                    self.bounds_3[1] = Parameters.get_cutoff('threebody',
+                                                      b_struc.coded_species,
+                                                      self.hyps_mask)
+                    if self.map_force: # the force mapping use cos angle in the 3rd dim
+                        self.bounds_3[1][2] = 1
                 map_3 = Map3body(self.grid_num_3, self.bounds_3,
                                  b_struc, self.map_force, self.svd_rank_3,
                                  self.mean_only,
@@ -173,7 +188,7 @@ class MappedGaussianProcess:
         '''
 
         # double check the container and the GP is the consistent
-        if not hpm.compare_dict(GP.hyps_mask, self.hyps_mask):
+        if not Parameters.compare_dict(GP.hyps_mask, self.hyps_mask):
             self.build_map_container(GP)
 
         if 2 in self.bodies:
@@ -260,8 +275,8 @@ class MappedGaussianProcess:
         self.spcs = [spc_2, spc_3]
         self.spcs_set = [spc_2_set, spc_3]
 
-    def predict(self, atom_env: AtomicEnvironment, mean_only: bool = False)\
-            -> (float, 'ndarray', 'ndarray', float):
+    def predict(self, atom_env: AtomicEnvironment, mean_only: bool = False,
+            rank_2: int = None, rank_3: int = None) -> (float, 'ndarray', 'ndarray', float):
         '''
         predict force, variance, stress and local energy for given
             atomic environment
@@ -283,8 +298,8 @@ class MappedGaussianProcess:
 
             f2, vir2, kern2, v2, e2 = \
                 self.predict_multicomponent(2, atom_env, self.kernel2b_info,
-                                            self.spcs_set[0],
-                                            self.maps_2, mean_only)
+                                            self.spcs_set[0], self.maps_2,
+                                            mean_only, rank_2, rank_3)
 
         # ---------------- predict for three body -------------------
         f3 = vir3 = kern3 = v3 = e3 = 0
@@ -293,7 +308,7 @@ class MappedGaussianProcess:
             f3, vir3, kern3, v3, e3 = \
                 self.predict_multicomponent(3, atom_env, self.kernel3b_info,
                                             self.spcs[1], self.maps_3,
-                                            mean_only)
+                                            mean_only, rank_2, rank_3)
 
         force = f2 + f3
         variance = kern2 + kern3 - np.sum((v2 + v3)**2, axis=0)
@@ -303,7 +318,7 @@ class MappedGaussianProcess:
         return force, variance, virial, energy
 
     def predict_multicomponent(self, body, atom_env, kernel_info,
-                               spcs_list, mappings, mean_only):
+                               spcs_list, mappings, mean_only, rank_2, rank_3):
         '''
         Add up results from `predict_component` to get the total contribution
         of all species
@@ -315,11 +330,13 @@ class MappedGaussianProcess:
         args = from_mask_to_args(hyps, hyps_mask, cutoffs)
 
         kern = np.zeros(3)
-        for d in range(3):
-            kern[d] = \
-                kernel(atom_env, atom_env, d+1, d+1, *args)
+        if not mean_only:
+            for d in range(3):
+                kern[d] = \
+                    kernel(atom_env, atom_env, d+1, d+1, *args)
 
         if (body == 2):
+            rank = rank_2
             spcs, comp_r, comp_xyz = get_bonds(atom_env.ctype,
                     atom_env.etypes, atom_env.bond_array_2)
             set_spcs = []
@@ -327,6 +344,7 @@ class MappedGaussianProcess:
                 set_spcs += [set(spc)]
             spcs = set_spcs
         elif (body == 3):
+            rank = rank_3
             if self.map_force:
                 get_triplets_func = get_triplets
             else:
@@ -347,7 +365,7 @@ class MappedGaussianProcess:
             xyzs = np.array(comp_xyz[i])
             map_ind = spcs_list.index(spc)
             f, vir, v, e = self.predict_component(lengths, xyzs,
-                    mappings[map_ind],  mean_only)
+                    mappings[map_ind], mean_only, rank)
             f_spcs += f
             vir_spcs += vir
             v_spcs += v
@@ -355,7 +373,7 @@ class MappedGaussianProcess:
 
         return f_spcs, vir_spcs, kern, v_spcs, e_spcs
 
-    def predict_component(self, lengths, xyzs, mapping, mean_only):
+    def predict_component(self, lengths, xyzs, mapping, mean_only, rank):
         '''
         predict force and variance contribution of one component
         '''
@@ -416,9 +434,9 @@ class MappedGaussianProcess:
         # TODO: implement energy var
         v = np.zeros(3)
         if not mean_only:
-            v_0 = mapping.var(lengths)
+            v_0 = mapping.var(lengths, rank)
             v_d = v_0 @ xyzs
-            v = mapping.var.V @ v_d
+            v = mapping.var.V[:,:rank] @ v_d
         return f, vir, v, e
 
     def write_lmp_file(self, lammps_name):
@@ -433,8 +451,8 @@ class MappedGaussianProcess:
         '''
         f.write(header_comment)
 
-        twobodyarray = len(self.spcs[0])
-        threebodyarray = len(self.spcs[1])
+        twobodyarray = len(self.maps_2)
+        threebodyarray = len(self.maps_3)
         header = '\n{} {}\n'.format(twobodyarray, threebodyarray)
         f.write(header)
 
@@ -502,14 +520,10 @@ class MappedGaussianProcess:
         for i in dictionary['bodies']:
             kern_info = f'kernel{i}b_info'
             hyps_mask = dictionary[kern_info][-1]
-            if (hyps_mask is None):
-                multihyps = False
-            else:
-                multihyps = True
 
             kernel_info = dictionary[kern_info]
             kernel_name = kernel_info[0]
-            kernel, _, ek, efk = str_to_kernel_set(kernel_name, multihyps)
+            kernel, _, ek, efk = str_to_kernel_set(kernel_name, hyps_mask)
             kernel_info[0] = kernel
             kernel_info[1] = ek
             kernel_info[2] = efk
@@ -853,8 +867,8 @@ class Map3body:
         n_strucs = len(GP.training_structures)
         n_kern = n_envs * 3 + n_strucs
 
-        mapk = str_to_mapped_kernel('3', GP.multihyps)
-        mapped_kernel_info = (kernel_info[0], kernel_info[1], mapk,
+        mapk = str_to_mapped_kernel('3', GP.hyps_mask)
+        mapped_kernel_info = (kernel_info[0], mapk[0], mapk[1],
                               kernel_info[3], kernel_info[4], kernel_info[5])
 
         if processes == 1:
@@ -994,8 +1008,8 @@ class Map3body:
 
             # parallelize based on grids, since usually the number of
             # the added training points are small
-            ngrids = int(math.ceil(n12 / processes))
-            nbatch = int(math.ceil(n12 / ngrids))
+            ngrids = int(ceil(n12 / processes))
+            nbatch = int(ceil(n12 / ngrids))
 
             block_id = []
             for ibatch in range(nbatch):
@@ -1170,7 +1184,7 @@ class Map3body:
         kernel, en_kernel, en_force_kernel, cutoffs, hyps, hyps_mask = \
             kernel_info
 
-        training_data = _global_training_data[name]
+        training_structure = _global_training_structures[name]
 
         ds = [1, 2, 3]
         size = (e-s) * 3
