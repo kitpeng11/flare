@@ -9,13 +9,13 @@ from .fake_gp import generate_mb_envs
 np.random.seed(0)
 
 cutoff_mask_list = [# (True, np.array([1]), [10]),
-                    (False, np.array([1]), [16]),
-                    (False, np.array([1, 0.05]), [16, 0]),
-                    (False, np.array([1, 0.8]), [16, 1]),
-                    (False, np.array([1, 0.9]), [16, 21]),
-                    (True, np.array([1, 0.8]), [16, 9]),
-                    (True, np.array([1, 0.05, 0.4]), [16, 0]),
-                    (False, np.array([1, 0.05, 0.4]), [16, 0])]
+                    (False, {'twobody':1}, [16]),
+                    (False, {'twobody':1, 'threebody':0.05}, [16, 0]),
+                    (False, {'twobody':1, 'threebody':0.8}, [16, 1]),
+                    (False, {'twobody':1, 'threebody':0.9}, [16, 21]),
+                    (True, {'twobody':1, 'threebody':0.8}, [16, 9]),
+                    (True, {'twobody':1, 'threebody':0.05, 'manybody':0.4}, [16, 0]),
+                    (False, {'twobody':1, 'threebody':0.05, 'manybody':0.4}, [16, 0])]
 
 
 @pytest.fixture(scope='module')
@@ -24,7 +24,7 @@ def structure() -> Structure:
     Returns a GP instance with a two-body numba-based kernel
     """
 
-    # list of all bonds and triplets can be found in test_files/test_env_list
+    # list of all twobodys and threebodys can be found in test_files/test_env_list
     cell = np.eye(3)
     species = [1, 2, 3, 1]
     positions = np.array([[0, 0, 0], [0.5, 0.5, 0.5],
@@ -147,10 +147,10 @@ def generate_mask(cutoff):
         # (1, 1) uses 0.5 cutoff,  (1, 2) (1, 3) (2, 3) use 0.9 cutoff
         mask = {'nspecie': 2, 'specie_mask': np.ones(118, dtype=int)}
         mask['specie_mask'][1] = 0
-        mask['cutoff_2b'] = np.array([0.5, 0.9])
-        mask['nbond'] = 2
-        mask['bond_mask'] = np.ones(4, dtype=int)
-        mask['bond_mask'][0] = 0
+        mask['twobody_cutoff_list'] = np.array([0.5, 0.9])
+        mask['ntwobody'] = 2
+        mask['twobody_mask'] = np.ones(4, dtype=int)
+        mask['twobody_mask'][0] = 0
 
     elif (ncutoff == 2):
         # the 3b mask is the same structure as 2b
@@ -174,7 +174,7 @@ def generate_mask(cutoff):
 
         mask = {'nspecie': nspecie,
                 'specie_mask': specie_mask,
-                'cutoff_3b': np.array([0.5, 0.9, 0.8, 0.9, 0.05]),
+                'threebody_cutoff_list': np.array([0.5, 0.9, 0.8, 0.9, 0.05]),
                 'ncut3b': ncut3b,
                 'cut3b_mask': tmask}
 
@@ -182,9 +182,49 @@ def generate_mask(cutoff):
         # (1, 1) uses 0.5 cutoff,  (1, 2) (1, 3) (2, 3) use 0.9 cutoff
         mask = {'nspecie': 2, 'specie_mask': np.ones(118, dtype=int)}
         mask['specie_mask'][1] = 0
-        mask['cutoff_mb'] = np.array([0.5, 0.9])
-        mask['nmb'] = 2
-        mask['mb_mask'] = np.ones(4, dtype=int)
-        mask['mb_mask'][0] = 0
+        mask['manybody_cutoff_list'] = np.array([0.5, 0.9])
+        mask['nmanybody'] = 2
+        mask['manybody_mask'] = np.ones(4, dtype=int)
+        mask['manybody_mask'][0] = 0
+    mask['cutoffs'] = cutoff
     return mask
 
+
+def test_auto_sweep():
+    """Test that the number of neighbors inside the local environment is
+        correctly computed."""
+
+    # Make an arbitrary non-cubic structure.
+    cell = np.array([[1.3, 0.5, 0.8],
+                     [-1.2, 1, 0.73],
+                     [-0.8, 0.1, 0.9]])
+    positions = np.array([[1.2, 0.7, 2.3],
+                          [3.1, 2.5, 8.9],
+                          [-1.8, -5.8, 3.0],
+                          [0.2, 1.1, 2.1],
+                          [3.2, 1.1, 3.3]])
+    species = np.array([1, 2, 3, 4, 5])
+    arbitrary_structure = Structure(cell, species, positions)
+
+    # Construct an environment.
+    cutoffs = np.array([4., 3.])
+    arbitrary_environment = \
+        AtomicEnvironment(arbitrary_structure, 0, cutoffs)
+
+    # Count the neighbors.
+    n_neighbors_1 = len(arbitrary_environment.etypes)
+
+    # Reduce the sweep value, and check that neighbors are missing.
+    sweep_val = arbitrary_environment.sweep_val
+    arbitrary_environment.sweep_array = \
+        np.arange(-sweep_val + 1, sweep_val, 1)
+    arbitrary_environment.compute_env()
+    n_neighbors_2 = len(arbitrary_environment.etypes)
+    assert(n_neighbors_1 > n_neighbors_2)
+
+    # Increase the sweep value, and check that the count is the same.
+    arbitrary_environment.sweep_array = \
+        np.arange(-sweep_val - 1, sweep_val + 2, 1)
+    arbitrary_environment.compute_env()
+    n_neighbors_3 = len(arbitrary_environment.etypes)
+    assert(n_neighbors_1 == n_neighbors_3)

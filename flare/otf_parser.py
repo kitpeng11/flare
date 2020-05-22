@@ -350,6 +350,7 @@ def parse_header_information(outfile: str = 'otf_run.out') -> dict:
     if stopreading is None:
         raise Exception("OTF File is malformed")
 
+    cutoffs_dict = {}
     for i, line in enumerate(lines[:stopreading]):
         # TODO Update this in full
         if 'cutoffs' in line:
@@ -363,6 +364,12 @@ def parse_header_information(outfile: str = 'otf_run.out') -> dict:
                 except:
                     cutoffs.append(float(val[:-1]))
             header_info['cutoffs'] = cutoffs
+        elif 'cutoff' in line:
+            line = line.split(':')
+            name = line[0][7:]
+            value = float(line[1])
+            cutoffs_dict[name] = value
+            header_info['cutoffs'] = cutoffs_dict
         if 'frames' in line:
             header_info['frames'] = int(line.split(':')[1])
         if 'kernel_name' in line:
