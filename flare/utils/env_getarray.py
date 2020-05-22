@@ -58,6 +58,7 @@ def get_2_body_arrays(positions, atom: int, cell, r_cut, cutoff_2, species, swee
     vec3 = cell[2]
 
     sepcut = False
+    bcn = 0
     if nspecie > 1 and cutoff_2 is not None:
         sepcut = True
         bc = specie_mask[species[atom]]
@@ -67,7 +68,7 @@ def get_2_body_arrays(positions, atom: int, cell, r_cut, cutoff_2, species, swee
     for n in range(noa):
         diff_curr = positions[n] - pos_atom
         im_count = 0
-        if sepcut:
+        if sepcut and (specie_mask is not None) and (cutoff_2 is not None):
             bn = specie_mask[species[n]]
             r_cut = cutoff_2[twobody_mask[bn+bcn]]
 
@@ -91,7 +92,7 @@ def get_2_body_arrays(positions, atom: int, cell, r_cut, cutoff_2, species, swee
 
     for m in range(noa):
         spec_curr = species[m]
-        if sepcut:
+        if sepcut and (specie_mask is not None) and (cutoff_2 is not None):
             bm = specie_mask[species[m]]
             r_cut = cutoff_2[twobody_mask[bm+bcn]]
         for im_count in range(super_count):
@@ -190,7 +191,7 @@ def get_3_body_arrays(bond_array_2, bond_positions_2, ctype,
         count = m + 1
         trips = 0
 
-        if sepcut:
+        if sepcut and (specie_mask is not None) and (cut3b_mask is not None) and (cutoff_3 is not None):
             # choose bond dependent bond
             bm = specie_mask[etypes[m]]
             btype_m = cut3b_mask[bm + bcn]  # (m, c)
@@ -199,7 +200,7 @@ def get_3_body_arrays(bond_array_2, bond_positions_2, ctype,
 
         for n in range(m + 1, ind_3):
 
-            if sepcut:
+            if sepcut and (specie_mask is not None) and (cut3b_mask is not None) and (cutoff_3 is not None):
                 bn = specie_mask[etypes[n]]
                 btype_n = cut3b_mask[bn + bcn]  # (n, c)
                 cut_n = cutoff_3[btype_n]
@@ -267,7 +268,7 @@ def get_m2_body_arrays(positions, atom: int, cell, r_cut, manybody_cutoff_list,
 
     # get coordination number of center atom for each species
     for s in range(n_specs):
-        if sepcut:
+        if sepcut and (spec_mask is not None) and (manybody_mask is not None) and (manybody_cutoff_list is not None):
             bs = spec_mask[species_list[s]]
             mbtype = manybody_mask[bcn + bs]
             r_cut = manybody_cutoff_list[mbtype]
@@ -277,7 +278,7 @@ def get_m2_body_arrays(positions, atom: int, cell, r_cut, manybody_cutoff_list,
 
     # get coordination number of all neighbor atoms for each species
     for i in range(n_bonds):
-        if sepcut:
+        if sepcut and (spec_mask is not None) and (manybody_mask is not None) and (manybody_cutoff_list is not None):
             be = spec_mask[etypes[i]]
             ben = be * nspec
 
@@ -285,7 +286,7 @@ def get_m2_body_arrays(positions, atom: int, cell, r_cut, manybody_cutoff_list,
             get_2_body_arrays(positions, bond_inds[i], cell, r_cut,
                               manybody_cutoff_list, species, sweep, nspec, spec_mask, manybody_mask)
         for s in range(n_specs):
-            if sepcut:
+            if sepcut and (spec_mask is not None) and (manybody_mask is not None) and (manybody_cutoff_list is not None):
                 bs = spec_mask[species_list[s]]
                 mbtype = manybody_mask[bs + ben]
                 r_cut = manybody_cutoff_list[mbtype]
@@ -295,7 +296,7 @@ def get_m2_body_arrays(positions, atom: int, cell, r_cut, manybody_cutoff_list,
 
     # get grad from each neighbor atom
     for i in range(n_bonds):
-        if sepcut:
+        if sepcut and (spec_mask is not None) and (manybody_mask is not None) and (manybody_cutoff_list is not None):
             be = spec_mask[etypes[i]]
             mbtype = manybody_mask[bcn + be]
             r_cut = manybody_cutoff_list[mbtype]

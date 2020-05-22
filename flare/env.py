@@ -6,9 +6,9 @@ from copy import deepcopy
 from math import ceil
 from flare.struc import Structure
 from flare.parameters import Parameters
-from flare.utils.env_getarray import get_2_body_arrays, get_3_body_arrays, \
+import flare.kernels.cutoffs as cf
+from flare.utils.env_getarray import get_2_body_arrays, get_3_body_arrays,\
     get_m2_body_arrays, get_m3_body_arrays
-
 
 class AtomicEnvironment:
     """Contains information about the local environment of an atom,
