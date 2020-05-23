@@ -108,7 +108,7 @@ def two_plus_three_body_grad(env1, env2, d1, d2, hyps, cutoffs,
             with respect to the hyperparameters.
     """
 
-    kern2, ls2, sig2 = \
+    kern2, sig2, ls2 = \
         two_body_grad_jit(env1.bond_array_2, env2.bond_array_2,
                           d1, d2, hyps[0], hyps[1], cutoffs[0], cutoff_func)
 
@@ -224,12 +224,20 @@ def two_plus_three_plus_many_body(env1: AtomicEnvironment, env2: AtomicEnvironme
                        env1.triplet_counts, env2.triplet_counts,
                        d1, d2, hyps[2], hyps[3], cutoffs[1], cutoff_func)
 
-    many_term =  many_body_jit(env1.q_array, env2.q_array, 
-                         env1.q_neigh_array, env2.q_neigh_array, 
-                         env1.q_neigh_grads, env2.q_neigh_grads,
-                         d1, d2, hyps[4], hyps[5])
+    m2b_term = many_2body_jit(env1.m2b_array, env2.m2b_array, 
+                            env1.m2b_grads, env2.m2b_grads,
+                            env1.m2b_neigh_array, env2.m2b_neigh_array, 
+                            env1.m2b_neigh_grads, env2.m2b_neigh_grads,
+                            d1, d2, hyps[4], hyps[5])
 
-    return two_term + three_term + many_term
+
+    m3b_term = many_3body_jit(env1.m3b_array, env2.m3b_array, 
+                             env1.m3b_grads, env2.m3b_grads,
+                             env1.m3b_neigh_array, env2.m3b_neigh_array, 
+                             env1.m3b_neigh_grads, env2.m3b_neigh_grads,
+                             d1, d2, hyps[6], hyps[7])
+
+    return two_term + three_term + m2b_term + m3b_term
 
 
 def two_plus_three_plus_many_body_grad(env1: AtomicEnvironment, env2: AtomicEnvironment,
@@ -252,7 +260,7 @@ def two_plus_three_plus_many_body_grad(env1: AtomicEnvironment, env2: AtomicEnvi
         float: Value of the 2+3+many-body kernel.
     """
 
-    kern2, ls2, sig2 = \
+    kern2, sig2, ls2 = \
         two_body_grad_jit(env1.bond_array_2, env2.bond_array_2,
                           d1, d2, hyps[0], hyps[1], cutoffs[0], cutoff_func)
 
@@ -263,12 +271,21 @@ def two_plus_three_plus_many_body_grad(env1: AtomicEnvironment, env2: AtomicEnvi
                             env1.triplet_counts, env2.triplet_counts,
                             d1, d2, hyps[2], hyps[3], cutoffs[1], cutoff_func)
 
-    kern_many, sigm, lsm = many_body_grad_jit(env1.q_array, env2.q_array,
-                                       env1.q_neigh_array, env2.q_neigh_array,
-                                       env1.q_neigh_grads, env2.q_neigh_grads,
-                                       d1, d2, hyps[4], hyps[5])
+    m2b_term, sig2_derv, ls2_derv = many_2body_grad_jit(env1.m2b_array, env2.m2b_array, 
+                                 env1.m2b_grads, env2.m2b_grads,
+                                 env1.m2b_neigh_array, env2.m2b_neigh_array, 
+                                 env1.m2b_neigh_grads, env2.m2b_neigh_grads,
+                                 d1, d2, hyps[4], hyps[5])
 
-    return kern2 + kern3 + kern_many, np.array([sig2, ls2, sig3, ls3, sigm, lsm])
+    m3b_term, sig3_derv, ls3_derv = many_3body_grad_jit(env1.m3b_array, env2.m3b_array, 
+                             env1.m3b_grads, env2.m3b_grads,
+                             env1.m3b_neigh_array, env2.m3b_neigh_array, 
+                             env1.m3b_neigh_grads, env2.m3b_neigh_grads,
+                             d1, d2, hyps[6], hyps[7])
+
+    grads = np.hstack([sig2, ls2, sig3, ls3, sig2_derv, ls2_derv, sig3_derv, ls3_derv])
+
+    return kern2 + kern3 + m2b_term + m3b_term, grads 
 
 
 def two_plus_three_plus_many_body_force_en(env1: AtomicEnvironment, env2: AtomicEnvironment,
@@ -303,11 +320,18 @@ def two_plus_three_plus_many_body_force_en(env1: AtomicEnvironment, env2: Atomic
                                 d1, hyps[2], hyps[3], cutoffs[1],
                                 cutoff_func) / 3
 
-    many_term = many_body_force_en_jit(env1.q_array, env2.q_array, 
-                                  env1.q_neigh_array, env1.q_neigh_grads, 
-                                  d1, hyps[4], hyps[5])
+    m2b_term = many_2body_force_en_jit(env1.m2b_array, env2.m2b_array, 
+                              env1.m2b_grads,
+                              env1.m2b_neigh_array, env1.m2b_neigh_grads,
+                              d1, hyps[4], hyps[5])
 
-    return two_term + three_term + many_term
+    m3b_term = many_3body_force_en_jit(env1.m3b_array, env2.m3b_array, 
+                                      env1.m3b_grads, 
+                                      env1.m3b_neigh_array, 
+                                      env1.m3b_neigh_grads,
+                                      d1, hyps[6], hyps[7])
+
+    return two_term + three_term + m2b_term + m3b_term
 
 
 def two_plus_three_plus_many_body_en(env1: AtomicEnvironment, env2: AtomicEnvironment,
@@ -337,9 +361,13 @@ def two_plus_three_plus_many_body_en(env1: AtomicEnvironment, env2: AtomicEnviro
                           env1.triplet_counts, env2.triplet_counts,
                           hyps[2], hyps[3], cutoffs[1], cutoff_func)
 
-    many_term = many_body_en_jit(env1.q_array, env2.q_array, hyps[4], hyps[5])
+    m2b_term = many_2body_en_jit(env1.m2b_array, env2.m2b_array, 
+                               hyps[4], hyps[5])
 
-    return two_term + three_term + many_term
+    m3b_term = many_3body_en_jit(env1.m3b_array, env2.m3b_array, 
+                                hyps[6], hyps[7])
+
+    return two_term + three_term + m2b_term + m3b_term
 
 
 # -----------------------------------------------------------------------------
@@ -397,7 +425,7 @@ def two_body_grad(env1, env2, d1, d2, hyps, cutoffs,
     ls = hyps[1]
     r_cut = cutoffs[0]
 
-    kernel, ls_derv, sig_derv = \
+    kernel, sig_derv, ls_derv = \
         two_body_grad_jit(env1.bond_array_2, env2.bond_array_2,
                           d1, d2, sig, ls, r_cut, cutoff_func)
     kernel_grad = np.array([sig_derv, ls_derv])
@@ -673,7 +701,6 @@ def many_body_force_en(env1, env2, d1, hyps, cutoffs,
         float: Value of the many-body force/energy kernel.
     """
 
-    # divide by three to account for triple counting
     m2b_term = many_2body_force_en_jit(env1.m2b_array, env2.m2b_array, 
                               env1.m2b_grads,
                               env1.m2b_neigh_array, env1.m2b_neigh_grads,
@@ -825,7 +852,7 @@ def two_body_grad_jit(bond_array_1, bond_array_2, d1, d2, sig, ls,
             sig_derv += sig_term
             ls_derv += ls_term
 
-    return kern, ls_derv, sig_derv
+    return kern, sig_derv, ls_derv
 
 
 @njit
